@@ -125,7 +125,15 @@ def check_literal_mailbox(args):
         effective = aliases(config)
         effective.update(aliases(account))
         target = effective.get(args.mailbox.lower(), args.mailbox)
-        if target != args.mailbox:
+        # IMAP reserves INBOX as case-insensitive (unlike other mailbox names).
+        # Himalaya may list it as "Inbox" while the configured alias is "INBOX".
+        # Only apply this equivalence when IMAP is the sole receiving backend;
+        # opaque IDs in Gmail/JMAP/local stores must still match exactly.
+        other_backends = ("gmail", "jmap", "msgraph", "maildir", "m2dir", "pimdir")
+        imap_only = isinstance(account.get("imap", config.get("imap")), dict) and not any(
+            key in account or key in config for key in other_backends)
+        same_inbox = imap_only and args.mailbox.lower() == target.lower() == "inbox"
+        if target != args.mailbox and not same_inbox:
             raise MailboxConfigError("Folder ID conflicts with a configured mailbox alias; refusing to access a different folder.")
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         raise MailboxConfigError("Cannot verify literal folder routing from Himalaya configuration; refusing this folder. Check config paths, account defaults, and mailbox aliases.") from None

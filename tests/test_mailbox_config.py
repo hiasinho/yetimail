@@ -43,6 +43,29 @@ class MailboxConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(MailboxConfigError, "conflicts"):
             self.check("SENT")
 
+    def test_imap_inbox_case_variants_are_the_same_mailbox(self):
+        self.config.write_text('[accounts.work.imap]\nhost="mail.example.test"\n'
+                               '[accounts.work.mailbox.alias]\ninbox="INBOX"\nsent="SENT"\n')
+        for mailbox in ("Inbox", "INBOX", "inbox", "iNbOx"):
+            self.check(mailbox)
+        with self.assertRaisesRegex(MailboxConfigError, "conflicts"):
+            self.check("Sent")
+        self.config.write_text('[accounts.work.imap]\nhost="mail.example.test"\n'
+                               '[accounts.work.mailbox.alias]\ninbox="Other Inbox"\n')
+        with self.assertRaisesRegex(MailboxConfigError, "conflicts"):
+            self.check("Inbox")
+
+    def test_inbox_case_equivalence_requires_unambiguous_imap(self):
+        for backend in ("gmail", "jmap", "msgraph", "maildir", "m2dir", "pimdir"):
+            for imap in ("", '[accounts.work.imap]\nhost="mail.example.test"\n'):
+                self.config.write_text(imap + f'[accounts.work.{backend}]\n'
+                                       '[accounts.work.mailbox.alias]\ninbox="INBOX"\n')
+                with self.subTest(backend=backend, imap=bool(imap)), self.assertRaisesRegex(MailboxConfigError, "conflicts"):
+                    self.check("Inbox")
+        self.config.write_text('[accounts.work.mailbox.alias]\ninbox="INBOX"\n')
+        with self.assertRaisesRegex(MailboxConfigError, "conflicts"):
+            self.check("Inbox")
+
     def test_account_overrides_global_case_insensitively(self):
         self.config.write_text('[mailbox.alias]\nsent = "Wrong"\ntrash = "Wrong trash"\n'
                                '[accounts.work.mailbox.aliases]\nSENT = "Sent"\n'

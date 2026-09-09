@@ -10,6 +10,20 @@ BarWidget {
     implicitWidth: button.implicitWidth
     implicitHeight: button.implicitHeight
     property bool opened: false
+    // An explicit allowlist avoids discovering/querying unrelated accounts.
+    readonly property var accounts: String(setting("accounts", "")).split(",").map(function(name) {
+        return name.trim()
+    }).filter(function(name, index, names) { return name !== "" && names.indexOf(name) === index })
+    property string selectedAccount: ""
+    readonly property string currentAccount: {
+        var preferred = String(setting("account", ""))
+        if (!accounts.length) return preferred
+        if (accounts.indexOf(selectedAccount) !== -1) return selectedAccount
+        return accounts.indexOf(preferred) !== -1 ? preferred : accounts[0]
+    }
+    function selectAccount(name) {
+        if (accounts.indexOf(name) !== -1) selectedAccount = name
+    }
     function close() { opened = false }
 
     MailService {
@@ -17,7 +31,7 @@ BarWidget {
         // The host injects bar/settings after construction. Do not query the
         // default account before those settings have arrived.
         active: root.bar !== null || demo
-        account: String(root.setting("account", ""))
+        account: root.currentAccount
         config: String(root.setting("config", ""))
         demo: root.setting("demo", false) === true
     }
@@ -32,7 +46,7 @@ BarWidget {
         anchors.fill: parent
         bar: root.bar
         text: "✉" + (mail.listError ? " !" : mail.unread ? " " + mail.unread : "")
-        tooltipText: "Jitsmail · " + (mail.listError ? "Refresh failed" : mail.unread + " unread in latest 50")
+        tooltipText: "Jitsmail · " + mail.accountLabel + " · " + (mail.listError ? "Refresh failed" : mail.unread + " unread in latest 50")
         onPressed: {
             root.opened = !root.opened
             if (root.opened) mail.refresh()
@@ -80,6 +94,22 @@ BarWidget {
                     }
                     Button { text: mail.loading ? "Refreshing…" : "Refresh"; enabled: !mail.loading; onClicked: mail.refresh() }
                     Button { text: "Close"; onClicked: root.close() }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.accounts.length > 1
+                    spacing: 6
+                    Repeater {
+                        model: root.accounts
+                        Button {
+                            required property string modelData
+                            text: modelData
+                            selected: root.currentAccount === modelData
+                            focusable: true
+                            onClicked: root.selectAccount(modelData)
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
                 }
                 Text {
                     Layout.fillWidth: true

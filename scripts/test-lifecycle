@@ -98,7 +98,7 @@ ShellRoot {
         }
     }
     Component.onCompleted: {
-        if (scenario === "widget") {
+        if (scenario === "widget" || scenario === "accounts") {
             widget = widgetFactory.createObject(window.contentItem)
             if (!check(widget !== null, "could not construct Widget")) return
             // MailService is a direct visual child; no production-only test API needed.
@@ -125,6 +125,48 @@ ShellRoot {
                     test.phase = 1
                 } else if (test.widgetMail.messages.length) {
                     if (!test.check(test.widgetMail.demo && test.widgetMail.messages[0].id === "widget/widget-config", "injected demo settings ignored")) return
+                    test.pass()
+                }
+                return
+            }
+            if (test.scenario === "accounts") {
+                if (test.phase === 0) {
+                    if (!test.check(!test.widgetMail.loading && !test.widgetMail.messages.length && !test.widgetMail.listError,
+                                    "launched before account settings injection")) return
+                    if (test.ticks < 12) return
+                    test.widget.settings = {demo: true, accounts: "hiash,hiasinho", account: "gmail", config: "accounts-config"}
+                    if (!test.check(test.widget.currentAccount === "hiash" && test.widgetMail.account === "hiash",
+                                    "invalid preferred account did not fall back to first allowed account")) return
+                    test.phase = 1
+                } else if (test.phase === 1 && test.widgetMail.messages.length && !test.widgetMail.loading) {
+                    if (!test.check(test.widgetMail.messages[0].id === "hiash/accounts-config",
+                                    "fallback inbox used wrong account")) return
+                    test.widgetMail.readMessage(test.widgetMail.messages[0].id)
+                    test.phase = 2
+                } else if (test.phase === 2 && test.widgetMail.message && !test.widgetMail.reading) {
+                    if (!test.check(test.widgetMail.message.id === "hiash/accounts-config",
+                                    "could not populate old account reader")) return
+                    test.widget.selectAccount("hiasinho")
+                    if (!test.check(test.widget.currentAccount === "hiasinho" && test.widgetMail.account === "hiasinho",
+                                    "allowed account switch did not reach MailService")) return
+                    if (!test.check(test.widgetMail.message === null && test.widgetMail.selectedId === "" && !test.widgetMail.messages.length,
+                                    "account switch retained stale reader or inbox")) return
+                    test.phase = 3
+                } else if (test.phase === 3 && test.widgetMail.messages.length && !test.widgetMail.loading) {
+                    if (!test.check(test.widgetMail.messages[0].id === "hiasinho/accounts-config" && test.widgetMail.message === null,
+                                    "switched account retained stale results")) return
+                    test.widget.selectAccount("gmail")
+                    if (!test.check(test.widget.currentAccount === "hiasinho" && test.widgetMail.account === "hiasinho" &&
+                                    test.widgetMail.messages.length && test.widgetMail.messages[0].id === "hiasinho/accounts-config",
+                                    "outside account accepted or rejection reset inbox")) return
+                    test.ticks = 0
+                    test.phase = 4
+                } else if (test.phase === 4 && test.ticks >= 20) {
+                    // Give any incorrectly queued refresh time to reach the fixture log.
+                    if (!test.check(test.widget.currentAccount === "hiasinho" && test.widgetMail.account === "hiasinho" &&
+                                    !test.widgetMail.loading && !test.widgetMail.listError && !test.widgetMail.readError &&
+                                    test.widgetMail.message === null && test.widgetMail.selectedId === "",
+                                    "rejection changed account or left stale reader/errors")) return
                     test.pass()
                 }
                 return
@@ -185,11 +227,11 @@ ShellRoot {
 }
 QML
 status=0
-for scenario in widget race missing unlaunchable; do
+for scenario in widget accounts race missing unlaunchable; do
     printf '\n=== lifecycle: %s ===\n' "$scenario"
     rm -f "$work/bin/python3"
     case "$scenario" in
-        widget|race) cp "$work/python-fixture" "$work/bin/python3" ;;
+        widget|accounts|race) cp "$work/python-fixture" "$work/bin/python3" ;;
         unlaunchable)
             printf '#!/jitsmail-test/nonexistent-interpreter\n' > "$work/bin/python3"
             chmod +x "$work/bin/python3" ;;
@@ -213,6 +255,14 @@ for scenario in widget race missing unlaunchable; do
             if [[ $(wc -l < "$JITSMAIL_CALLS") != 1 ]] ||
                ! grep -qx 'list account=widget config=widget-config demo=true id=none' "$JITSMAIL_CALLS"; then
                 echo 'LIFECYCLE_FAIL widget: unexpected launch count or non-demo invocation'; status=1
+            fi ;;
+        accounts)
+            if [[ $(wc -l < "$JITSMAIL_CALLS") != 3 ]] ||
+               grep -Evq '^(list|read) account=(hiash|hiasinho) config=accounts-config demo=true id=' "$JITSMAIL_CALLS" ||
+               ! grep -qx 'list account=hiash config=accounts-config demo=true id=none' "$JITSMAIL_CALLS" ||
+               ! grep -qx 'read account=hiash config=accounts-config demo=true id=hiash/accounts-config' "$JITSMAIL_CALLS" ||
+               ! grep -qx 'list account=hiasinho config=accounts-config demo=true id=none' "$JITSMAIL_CALLS"; then
+                echo 'LIFECYCLE_FAIL accounts: unexpected launches or account outside allowlist'; status=1
             fi ;;
         race)
             if [[ $(grep -c '^read ' "$JITSMAIL_CALLS") != 2 ]] || grep -q 'id=duplicate' "$JITSMAIL_CALLS"; then

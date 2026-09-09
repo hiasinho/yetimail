@@ -4,6 +4,7 @@ A small Omarchy mail panel powered by **Himalaya 2.1**. First milestone: read yo
 
 - Mail bar widget and two-pane inbox/reader.
 - Latest 50 inbox messages, newest first; click to read.
+- Optional account selector restricted to an explicit allowlist; only the selected account is queried.
 - Unread badge counts **only the loaded 50**, not the whole mailbox.
 - Automatic refresh every 120 seconds, plus Refresh / Ctrl+R.
 - Plain-text message display, including inert HTML-to-text fallback.
@@ -48,14 +49,17 @@ Settings are declared in `manifest.json` and stored in the widget's entry in `~/
 ```json
 {
   "id": "hiasinho.jitsmail",
-  "account": "personal",
+  "accounts": "hiash,hiasinho",
+  "account": "hiash",
   "config": "",
   "demo": false,
   "refreshSeconds": 120
 }
 ```
 
-An empty `account` or `config` uses Himalaya's default. A nonempty config is a path passed directly to Himalaya. `demo: true` uses synthetic messages. Escape or Close dismisses the panel. Selecting another message waits until the current read completes.
+`accounts` is an optional comma-separated allowlist. Buttons switch between those accounts, clearing the previous inbox and reader; excluded accounts are never discovered or queried. The badge belongs to the selected account, not a combined inbox. Selection is per bar instance and resets to `account` after reload (or the first allowed account if the preferred account is excluded).
+
+With an empty allowlist, the single-account behavior is unchanged. An empty `account` or `config` uses Himalaya's default. A nonempty config is a path passed directly to Himalaya. `demo: true` uses synthetic messages. Escape or Close dismisses the panel. Selecting another message waits until the current read completes.
 
 ## Develop and test
 

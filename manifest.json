@@ -12,8 +12,9 @@
     "category": "Communication",
     "allowMultiple": false,
     "defaultSection": "right",
-    "defaults": { "account": "", "config": "", "demo": false, "refreshSeconds": 120 },
+    "defaults": { "accounts": "", "account": "", "config": "", "demo": false, "refreshSeconds": 120 },
     "schema": [
+      { "key": "accounts", "type": "string", "label": "Allowed accounts (comma-separated; empty = single account)" },
       { "key": "account", "type": "string", "label": "Himalaya account (empty = default)" },
       { "key": "config", "type": "string", "label": "Himalaya config path (empty = default)" },
       { "key": "demo", "type": "boolean", "label": "Demo mode (no mail access)" },

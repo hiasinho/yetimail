@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Isolated demo shell: never loads the user's mail configuration or installs a plugin.
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+omarchy_shell=${OMARCHY_SHELL_PATH:-/usr/share/omarchy/shell}
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+ln -s "$omarchy_shell/Commons" "$work/Commons"
+ln -s "$omarchy_shell/Ui" "$work/Ui"
+ln -s "$root" "$work/Jitsmail"
+cat > "$work/shell.qml" <<'QML'
+import QtQuick
+import Quickshell
+import "Jitsmail"
+ShellRoot {
+    FloatingWindow {
+        visible: true
+        implicitWidth: 1000
+        implicitHeight: 700
+        Widget { id: widget; settings: ({demo: true}); anchors { top: parent.top; right: parent.right } Component.onCompleted: opened = true }
+    }
+    MailService { id: probe; demo: true }
+    Timer {
+        interval: 100
+        running: Quickshell.env("JITSMAIL_INTERACTIVE") !== "1"
+        repeat: true
+        property bool requested: false
+        onTriggered: {
+            if (probe.listError || probe.readError) { console.error("SMOKE FAILED: " + probe.listError + probe.readError); Qt.quit() }
+            if (!requested && probe.messages.length) { requested = true; probe.readMessage(probe.messages[0].id) }
+            if (probe.message) { console.log("JITSMAIL_SMOKE_OK"); Qt.quit() }
+        }
+    }
+    Timer { interval: 10000; running: Quickshell.env("JITSMAIL_INTERACTIVE") !== "1"; onTriggered: { console.error("SMOKE TIMEOUT"); Qt.quit() } }
+}
+QML
+QT_QPA_PLATFORM=${QT_QPA_PLATFORM:-offscreen} quickshell -p "$work" --no-color 2>&1 | tee "$work/output"
+if [[ ${JITSMAIL_INTERACTIVE:-0} == 1 ]]; then exit 0; fi
+grep -q 'JITSMAIL_SMOKE_OK' "$work/output"
+if grep -Eq 'TypeError|ReferenceError|Unable to assign|Failed to load configuration|SMOKE FAILED|SMOKE TIMEOUT' "$work/output"; then exit 1; fi

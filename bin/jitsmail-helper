@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""One-shot, read-only Himalaya 2.1 adapter. Only stdout is the JSON protocol."""
+
+import argparse
+import json
+import subprocess
+import sys
+from email import policy
+from email.parser import BytesParser
+from email.utils import formataddr
+from html.parser import HTMLParser
+
+
+TIMEOUT = 30
+
+
+class HelperError(Exception):
+    pass
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise HelperError(message)
+
+
+class HTMLText(HTMLParser):
+    """Extract inert text; never render markup or load external resources."""
+
+    hidden = {"script", "style", "head", "iframe", "object", "template"}
+    blocks = {"p", "div", "br", "hr", "li", "tr", "h1", "h2", "h3", "blockquote"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self.suppressed = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.hidden:
+            self.suppressed.append(tag)
+        elif not self.suppressed and tag in self.blocks:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if self.suppressed:
+            if tag == self.suppressed[-1]:
+                self.suppressed.pop()
+        elif tag in self.blocks:
+            self.parts.append("\n")
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
+
+    def handle_data(self, data):
+        if not self.suppressed:
+            self.parts.append(data)
+
+    def text(self):
+        return "\n".join(
+            line for line in (" ".join(line.split()) for line in "".join(self.parts).splitlines())
+            if line
+        )
+
+
+def run_himalaya(args, command):
+    argv = ["himalaya"]
+    if args.config is not None:
+        argv.append("--config=" + args.config)
+    if args.account is not None:
+        argv.append("--account=" + args.account)
+    try:
+        result = subprocess.run(
+            argv + command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, timeout=TIMEOUT, check=False,
+        )
+    except FileNotFoundError:
+        raise HelperError("Himalaya is not installed or not on PATH") from None
+    except subprocess.TimeoutExpired:
+        raise HelperError("Himalaya timed out after 30 seconds") from None
+    except OSError:
+        raise HelperError("Could not start Himalaya") from None
+    if result.returncode:
+        # Do not echo backend diagnostics: they can contain private config details.
+        raise HelperError(f"Himalaya failed (exit {result.returncode})")
+    return result.stdout
+
+
+def list_messages(args):
+    raw = run_himalaya(args, ["--json", "envelope", "list", "--page-size", "50"])
+    try:
+        envelopes = json.loads(raw)["envelopes"]
+        if not isinstance(envelopes, list):
+            raise ValueError()
+        messages = []
+        for envelope in envelopes:
+            if not isinstance(envelope["id"], str):
+                raise ValueError()
+            senders = []
+            for address in envelope.get("from", []):
+                name, email = address.get("name"), address["email"]
+                # Keep Unicode names readable rather than RFC-2047 encoding them.
+                senders.append(formataddr((name, email)) if name and name.isascii()
+                               else f"{name} <{email}>" if name else email)
+            seen = any(flag.get("iana") == "seen" or
+                       flag.get("raw", "").lower().lstrip("\\$") == "seen"
+                       for flag in envelope.get("flags", []))
+            messages.append({
+                "id": envelope["id"], "subject": envelope.get("subject") or "",
+                "from": ", ".join(senders), "date": envelope.get("date") or "",
+                "unread": not seen,
+            })
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise HelperError("Invalid envelope response from Himalaya") from None
+    return {"messages": messages, "account": args.account or "Default"}
+
+
+def parse_message(raw, message_id):
+    message = BytesParser(policy=policy.default).parsebytes(raw)
+    part = message.get_body(preferencelist=("plain", "html"))
+    body = ""
+    if part is not None:
+        payload = part.get_payload(decode=True)
+        if payload is not None:
+            try:
+                body = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+            except (LookupError, UnicodeError):
+                body = payload.decode("utf-8", errors="replace")
+        if part.get_content_type() == "text/html":
+            parser = HTMLText()
+            parser.feed(body)
+            parser.close()
+            body = parser.text()
+    return {
+        "id": message_id,
+        **{header: ", ".join(str(value) for value in message.get_all(header, []))
+           for header in ("subject", "from", "to", "date")},
+        "body": body.strip(),
+    }
+
+
+DEMO_MESSAGES = [
+    {"id": "demo-1", "subject": "Welcome to Jitsmail", "from": "Alex <alex@example.test>",
+     "to": "You <you@example.test>", "date": "2026-01-15T10:30:00+00:00", "unread": True,
+     "body": "Welcome!\n\nThis is demo mail. No account or network was accessed.\n\nAlex"},
+    {"id": "demo-2", "subject": "Lunch tomorrow?", "from": "Sam <sam@example.test>",
+     "to": "You <you@example.test>", "date": "2026-01-14T14:00:00+00:00", "unread": False,
+     "body": "Hi,\n\nWould noon work for lunch tomorrow?\n\nSam"},
+    {"id": "demo-3", "subject": "A quiet inbox", "from": "Jitsmail <hello@example.test>",
+     "to": "You <you@example.test>", "date": "2026-01-13T09:00:00+00:00", "unread": True,
+     "body": "Plain text, no remote images, and no tracking requests.\n\nEnjoy your day."},
+]
+
+
+def demo(args):
+    if args.command == "list":
+        return {"account": args.account or "Demo", "messages": [
+            {key: message[key] for key in ("id", "subject", "from", "date", "unread")}
+            for message in DEMO_MESSAGES
+        ]}
+    for message in DEMO_MESSAGES:
+        if message["id"] == args.id:
+            return {key: value for key, value in message.items() if key != "unread"}
+    raise HelperError("Demo message not found")
+
+
+def main(argv=None):
+    parser = Parser(description=__doc__)
+    parser.add_argument("command", choices=("list", "read"))
+    parser.add_argument("--account", help="Himalaya account name; omit for its default")
+    parser.add_argument("--config", help="Himalaya configuration path")
+    parser.add_argument("--id", help="message ID (required for read)")
+    parser.add_argument("--demo", action="store_true", help="use fixtures; never invoke Himalaya")
+    try:
+        args = parser.parse_args(argv)
+        if args.command == "read" and not args.id:
+            raise HelperError("read requires --id")
+        if args.command == "list" and args.id is not None:
+            raise HelperError("--id is only supported for read")
+        if args.demo:
+            result = demo(args)
+        elif args.command == "list":
+            result = list_messages(args)
+        else:
+            raw = run_himalaya(args, ["message", "read", "--raw", "--", args.id])
+            try:
+                result = parse_message(raw, args.id)
+            except (ValueError, RecursionError):
+                raise HelperError("Could not parse message from Himalaya") from None
+    except HelperError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(json.dumps(result, ensure_ascii=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

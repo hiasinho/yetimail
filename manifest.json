@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "hiasinho.jitsmail",
+  "name": "Jitsmail",
+  "version": "0.1.0",
+  "author": "hiasinho",
+  "description": "A small, read-only Himalaya mail panel for Omarchy.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Widget.qml" },
+  "barWidget": {
+    "displayName": "Jitsmail",
+    "category": "Communication",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": { "account": "", "config": "", "demo": false, "refreshSeconds": 120 },
+    "schema": [
+      { "key": "account", "type": "string", "label": "Himalaya account (empty = default)" },
+      { "key": "config", "type": "string", "label": "Himalaya config path (empty = default)" },
+      { "key": "demo", "type": "boolean", "label": "Demo mode (no mail access)" },
+      { "key": "refreshSeconds", "type": "integer", "min": 30, "max": 3600, "label": "Refresh interval in seconds (minimum 30)" }
+    ]
+  }
+}

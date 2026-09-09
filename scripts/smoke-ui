@@ -21,6 +21,7 @@ ln -s "$root" "$work/Jitsmail"
 cat > "$work/shell.qml" <<'QML'
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.Commons
 import "Jitsmail"
 ShellRoot {
@@ -35,9 +36,17 @@ ShellRoot {
             color: Color.foreground
             textFormat: Text.PlainText
         }
-        Widget { id: widget; settings: ({demo: true}); anchors { top: parent.top; right: parent.right } }
+        Widget { id: widget; settings: ({demo: true, accounts: "personal,work", account: "personal"}); anchors { top: parent.top; right: parent.right } }
         // The popup needs the anchor window's screen after Wayland maps it.
         Timer { interval: 500; running: true; onTriggered: widget.opened = true }
+    }
+    // Demo-only IPC makes visual verification repeatable without pointer input.
+    IpcHandler {
+        target: "jitsmailDemo"
+        function open(): void { widget.opened = true }
+        function readFirst(): void { widget.opened = true; widget.openCurrent() }
+        function help(): void { widget.opened = true; widget.showHelp = !widget.showHelp }
+        function close(): void { widget.close() }
     }
     MailService { id: probe; demo: true }
     Timer {

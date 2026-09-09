@@ -119,9 +119,18 @@ For an interactive demo:
 scripts/demo-ui
 ```
 
-This opens a separate demo shell, not your running Omarchy shell. Stop it with Ctrl+C in the terminal.
+This opens a separate demo shell with two synthetic accounts, not your running Omarchy shell. Stop it with Ctrl+C in the terminal. Its logged temporary config path can also be used for demo-only visual checks:
+
+```sh
+quickshell -p /tmp/<demo-config> ipc call jitsmailDemo readFirst
+quickshell -p /tmp/<demo-config> ipc call jitsmailDemo help
+```
+
+Neither command accesses real accounts.
 
 ## Design
+
+The reference-inspired layout uses a compact monospace sidebar, bordered account selectors, dense sender/subject rows, and a separate message header above the reader. Press `v` (or the header's ≡ button) to view and copy complete headers, including long subjects and recipient lists. Keyboard help opens as a floating shortcut card rather than shifting the inbox. Controls only expose implemented actions; compose, search, and folders are not placeholders.
 
 ```text
 Widget.qml → MailService.qml → bin/jitsmail-helper → Himalaya → IMAP

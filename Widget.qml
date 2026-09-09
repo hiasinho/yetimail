@@ -25,11 +25,50 @@ BarWidget {
     property string cursorId: ""
     property bool showHelp: false
     property bool showLinks: false
+    property bool showHeaders: false
     property int linkIndex: 0
     readonly property var messageLinks: mail.message && Array.isArray(mail.message.links) ? mail.message.links : []
     readonly property var selectedLink: messageLinks[linkIndex] || null
     property var openUrl: function(url) { return Qt.openUrlExternally(url) }
 
+    // Keep the panel on the shell's configured monospace font, not Qt's UI font.
+    component MailLabel: Text {
+        font.family: Style.font.family
+        font.pixelSize: 12
+        color: Color.foreground
+        textFormat: Text.PlainText
+    }
+    component MailButton: Button {
+        fontFamily: Style.font.family
+        fontSize: 11
+        horizontalPadding: 6
+        verticalPadding: 4
+        radius: 0
+        focusable: true
+    }
+    function senderName(from) {
+        var value = String(from || "")
+        var name = value.replace(/\s*<[^>]*>\s*$/, "").trim().replace(/^"(.*)"$/, "$1")
+        return name || senderAddress(value) || "Unknown sender"
+    }
+    function senderAddress(from) {
+        var value = String(from || "")
+        var match = value.match(/<([^>]+)>/)
+        return match ? match[1] : value.indexOf("@") !== -1 ? value : ""
+    }
+    function shortDate(value) {
+        var date = new Date(value)
+        if (isNaN(date.getTime())) return String(value || "")
+        return Qt.formatDateTime(date, date.toDateString() === new Date().toDateString() ? "HH:mm" : "MMM d")
+    }
+
+    function toggleHeaders() {
+        if (showHelp || !mail.message || busy) return
+        showHeaders = !showHeaders
+        showLinks = false
+        pane = "reader"
+        messageText.forceActiveFocus()
+    }
     function toggleLinks() {
         if (showHelp || !mail.message || busy) return
         pane = "reader"
@@ -49,6 +88,7 @@ BarWidget {
     readonly property int cursorIndex: mail.messages.findIndex(function(m) { return m.id === root.cursorId })
     readonly property string targetId: pane === "reader" ? mail.selectedId : cursorId
     readonly property var targetEnvelope: mail.messages.find(function(m) { return m.id === root.targetId }) || null
+    readonly property var displayedEnvelope: mail.messages.find(function(m) { return m.id === mail.selectedId }) || null
     readonly property bool busy: mail.loading || mail.reading || mail.marking
 
     function selectAccount(name) {
@@ -97,7 +137,7 @@ BarWidget {
         if (showHelp) return
         if (showLinks) moveLink(delta * 5)
         else if (pane === "reader") scrollReader(delta * reader.availableHeight / 2)
-        else moveCursor(delta * Math.max(1, Math.floor(inbox.height / 86 / 2)))
+        else moveCursor(delta * Math.max(1, Math.floor(inbox.height / 68 / 2)))
     }
     function openCurrent() {
         if (!cursorId || busy) return
@@ -110,9 +150,11 @@ BarWidget {
         else if (mail.selectedId) { pane = "reader"; messageText.forceActiveFocus() }
         else openCurrent()
     }
-    function markCurrent(seen) {
-        if (!targetEnvelope || busy || showHelp || targetEnvelope.unread === !seen) return
-        mail.setRead(targetId, seen)
+    function markCurrent(seen) { markMessage(targetId, seen) }
+    function markMessage(id, seen) {
+        var envelope = mail.messages.find(function(m) { return m.id === id })
+        if (!envelope || busy || showHelp || envelope.unread === !seen) return
+        mail.setRead(id, seen)
     }
     function handleEscape() {
         if (showHelp) showHelp = false
@@ -132,7 +174,7 @@ BarWidget {
     Connections {
         target: mail
         function onMessagesChanged() { root.syncCursor() }
-        function onMessageChanged() { root.showLinks = false; root.linkIndex = 0 }
+        function onMessageChanged() { root.showLinks = false; root.showHeaders = false; root.linkIndex = 0 }
         function onSelectedIdChanged() { if (!mail.selectedId) root.pane = "list" }
     }
     Timer {
@@ -169,6 +211,7 @@ BarWidget {
             Shortcut { sequences: ["Return", "Enter", "L", "Right"]; enabled: root.opened && root.pane === "list"; onActivated: root.openCurrent() }
             Shortcut { sequences: ["H", "Left"]; enabled: root.opened; onActivated: root.back() }
             Shortcut { sequence: "O"; enabled: root.opened; onActivated: root.toggleLinks() }
+            Shortcut { sequence: "V"; enabled: root.opened; onActivated: root.toggleHeaders() }
             Shortcut { sequences: ["Return", "Enter", "L", "Right"]; enabled: root.opened && root.showLinks; autoRepeat: false; onActivated: root.openLink() }
             Shortcut { sequence: "G, G"; enabled: root.opened; onActivated: root.jump(false) }
             Shortcut { sequence: "Shift+G"; enabled: root.opened; onActivated: root.jump(true) }
@@ -186,96 +229,81 @@ BarWidget {
             Shortcut { sequence: "Escape"; enabled: root.opened; onActivated: root.handleEscape() }
             Shortcut { sequence: "Q"; enabled: root.opened; onActivated: root.close() }
 
-            ColumnLayout {
+            RowLayout {
                 anchors.fill: parent
-                spacing: 10
-                RowLayout {
-                    Layout.fillWidth: true
-                    Text {
-                        text: "Jitsmail / Inbox" + (mail.demo ? " · Demo" : "")
-                        color: Color.foreground
-                        font.bold: true
-                        font.pixelSize: 18
-                        textFormat: Text.PlainText
-                    }
-                    Text { Layout.fillWidth: true; text: mail.accountLabel; color: Color.foreground; opacity: 0.65; elide: Text.ElideRight; textFormat: Text.PlainText }
-                    Button { text: mail.loading ? "Refreshing…" : "Refresh"; enabled: !root.busy; focusable: true; onClicked: mail.refresh() }
-                    Button { text: "?"; focusable: true; onClicked: root.showHelp = !root.showHelp }
-                    Button { text: "Close"; focusable: true; onClicked: root.close() }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    visible: root.accounts.length > 1
-                    spacing: 6
-                    Repeater {
-                        model: root.accounts
-                        Button {
-                            required property string modelData
-                            text: modelData
-                            selected: root.currentAccount === modelData
-                            enabled: !mail.marking
-                            focusable: true
-                            onClicked: root.selectAccount(modelData)
-                        }
-                    }
-                    Item { Layout.fillWidth: true }
-                    Text { text: "[ / ] switch account"; color: Color.foreground; opacity: 0.55 }
-                }
-                Text {
-                    Layout.fillWidth: true
-                    visible: root.showHelp
-                    text: "LIST: j/k or ↓/↑ select · Enter/l/→ open · gg/G first/last\nREADER: j/k scroll · Ctrl+d/u half-page · gg/G top/bottom · h/← back\nLINKS: o shows destinations · j/k select · Enter opens in browser · h back\nTab switches panes · n/p next/previous page · [/] accounts\nm mark read · u mark unread · r refresh · ? help · q close\nEsc closes help, returns to list, then closes panel. Ctrl+C copies selected text."
-                    color: Color.foreground
-                    wrapMode: Text.Wrap
-                    textFormat: Text.PlainText
-                }
-                Text {
-                    Layout.fillWidth: true
-                    visible: mail.listError !== "" || mail.actionError !== ""
-                    text: mail.actionError || mail.listError
-                    color: Color.foreground
-                    wrapMode: Text.Wrap
-                    maximumLineCount: 3
-                    elide: Text.ElideRight
-                    textFormat: Text.PlainText
-                }
-                RowLayout {
-                    Layout.fillWidth: true
+                spacing: 16
+                ColumnLayout {
+                    id: sidebar
+                    Layout.preferredWidth: Math.min(310, content.width * 0.35)
+                    Layout.minimumWidth: 0
+                    Layout.maximumWidth: Layout.preferredWidth
                     Layout.fillHeight: true
-                    spacing: 14
-                    ColumnLayout {
-                        Layout.preferredWidth: Math.min(310, content.width * 0.38)
-                        Layout.fillHeight: true
-                        Text {
+                    spacing: 10
+                    RowLayout {
+                        Layout.fillWidth: true
+                        ColumnLayout {
                             Layout.fillWidth: true
-                            text: (root.pane === "list" ? "▸ " : "") + "Page " + mail.page + " · " + mail.unread + " unread here" + (mail.listError ? " · stale" : "")
-                            color: root.pane === "list" ? Color.accent : Color.foreground
-                            textFormat: Text.PlainText
+                            spacing: 3
+                            MailLabel { text: mail.demo ? "MAIL / DEMO" : "MAIL"; font.pixelSize: 10; font.letterSpacing: 1.5; opacity: 0.55 }
+                            MailLabel { Layout.fillWidth: true; text: mail.unread + " unread"; font.pixelSize: 14 }
                         }
+                        MailButton { text: mail.loading ? "…" : "Refresh"; tooltipText: "Refresh (r)"; enabled: !root.busy; onClicked: mail.refresh() }
+                    }
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Repeater {
+                            model: root.accounts.length ? root.accounts : [root.currentAccount || mail.accountLabel]
+                            MailButton {
+                                required property string modelData
+                                width: Math.min(implicitWidth, sidebar.width)
+                                clip: true
+                                text: modelData
+                                bordered: true
+                                selected: root.currentAccount === modelData || !root.accounts.length
+                                enabled: !mail.marking
+                                tooltipText: modelData + " · [ / ] switch account"
+                                onClicked: root.selectAccount(modelData)
+                            }
+                        }
+                    }
                         ListView {
                             id: inbox
                             onActiveFocusChanged: if (activeFocus) root.pane = "list"
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             clip: true
-                            spacing: 4
+                            spacing: 2
                             model: mail.messages
                             ScrollBar.vertical: ScrollBar {}
                             delegate: Rectangle {
                                 required property var modelData
                                 width: inbox.width
-                                height: 82
-                                radius: 5
-                                color: modelData.id === root.cursorId ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.18) : mouse.containsMouse ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.07) : "transparent"
-                                border.width: modelData.id === root.cursorId && root.pane === "list" ? 1 : 0
-                                border.color: Color.accent
-                                Column {
+                                height: 66
+                                radius: 0
+                                color: modelData.id === root.cursorId ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.14) : mouse.containsMouse ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.07) : "transparent"
+                                MailLabel {
+                                    x: 7; y: 9
+                                    text: "●"
+                                    font.pixelSize: 9
+                                    color: Color.accent
+                                    visible: modelData.unread
+                                }
+                                ColumnLayout {
                                     anchors.fill: parent
-                                    anchors.margins: 9
-                                    spacing: 4
-                                    Text { width: parent.width; text: (modelData.unread ? "● " : "") + modelData.from; color: Color.foreground; font.bold: modelData.unread; elide: Text.ElideRight; textFormat: Text.PlainText }
-                                    Text { width: parent.width; text: modelData.subject || "(No subject)"; color: Color.foreground; elide: Text.ElideRight; textFormat: Text.PlainText }
-                                    Text { width: parent.width; text: modelData.date; color: Color.foreground; opacity: 0.55; font.pixelSize: 11; elide: Text.ElideRight; textFormat: Text.PlainText }
+                                    anchors.leftMargin: 22
+                                    anchors.rightMargin: 9
+                                    anchors.topMargin: 7
+                                    anchors.bottomMargin: 7
+                                    spacing: 3
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        MailLabel { Layout.fillWidth: true; Layout.minimumWidth: 0; text: root.senderName(modelData.from); color: Color.accent; font.bold: modelData.unread; elide: Text.ElideRight }
+                                        MailLabel { text: root.shortDate(modelData.date); font.pixelSize: 10; opacity: 0.55; Layout.maximumWidth: 65; elide: Text.ElideRight }
+                                    }
+                                    MailLabel { Layout.fillWidth: true; text: modelData.subject || "(No subject)"; elide: Text.ElideRight }
+                                    MailLabel { Layout.fillWidth: true; text: root.senderAddress(modelData.from); opacity: 0.5; font.pixelSize: 11; elide: Text.ElideRight }
                                 }
                                 MouseArea {
                                     id: mouse
@@ -285,7 +313,7 @@ BarWidget {
                                     onClicked: { root.cursorId = modelData.id; root.openCurrent() }
                                 }
                             }
-                            Text {
+                            MailLabel {
                                 anchors.centerIn: parent
                                 width: parent.width
                                 visible: mail.messages.length === 0
@@ -298,9 +326,14 @@ BarWidget {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            Button { text: "‹ Newer (p)"; enabled: mail.page > 1 && !root.busy; focusable: true; onClicked: mail.previousPage() }
-                            Item { Layout.fillWidth: true }
-                            Button { text: "Older (n) ›"; enabled: mail.hasNext && !root.busy; focusable: true; onClicked: mail.nextPage() }
+                            MailButton { text: "‹ Newer"; tooltipText: "Previous page (p)"; enabled: mail.page > 1 && !root.busy; onClicked: mail.previousPage() }
+                            MailLabel { Layout.fillWidth: true; text: "Page " + mail.page; horizontalAlignment: Text.AlignHCenter; opacity: 0.55; font.pixelSize: 10 }
+                            MailButton { text: "Older ›"; tooltipText: "Next page (n)"; enabled: mail.hasNext && !root.busy; onClicked: mail.nextPage() }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            MailLabel { Layout.fillWidth: true; text: mail.marking ? "Updating…" : mail.loading ? "Refreshing…" : mail.listError ? "Refresh failed · stale" : mail.messages.length + " messages on page"; opacity: 0.55; font.pixelSize: 10; elide: Text.ElideRight }
+                            MailButton { text: "Shortcuts ?"; selected: root.showHelp; onClicked: root.showHelp = !root.showHelp }
                         }
                     }
                     Rectangle { Layout.fillHeight: true; width: 1; color: Color.foreground; opacity: 0.15 }
@@ -309,16 +342,44 @@ BarWidget {
                         Layout.fillHeight: true
                         RowLayout {
                             Layout.fillWidth: true
-                            Text { Layout.fillWidth: true; text: root.pane === "reader" ? "▸ Reader" : "Reader"; color: root.pane === "reader" ? Color.accent : Color.foreground }
-                            Button { text: "Links (o)"; enabled: !!mail.message && !root.busy; focusable: true; onClicked: root.toggleLinks() }
-                            Button { text: "Read (m)"; enabled: !!root.targetEnvelope && root.targetEnvelope.unread && !root.busy; focusable: true; onClicked: root.markCurrent(true) }
-                            Button { text: "Unread (u)"; enabled: !!root.targetEnvelope && !root.targetEnvelope.unread && !root.busy; focusable: true; onClicked: root.markCurrent(false) }
+                            spacing: 2
+                            MailLabel { Layout.fillWidth: true; Layout.minimumWidth: 0; text: mail.message ? mail.message.subject || "(No subject)" : "Inbox"; font.pixelSize: 16; font.bold: true; elide: Text.ElideRight }
+                            MailButton { text: "≡"; tooltipText: "Full selectable headers (v)"; selected: root.showHeaders; enabled: !!mail.message && !root.busy; onClicked: root.toggleHeaders() }
+                            MailButton { text: "↗"; tooltipText: "Show links (o)"; selected: root.showLinks; enabled: !!mail.message && !root.busy; onClicked: root.toggleLinks() }
+                            MailButton { objectName: "readerMarkRead"; text: "✓"; tooltipText: "Mark this message read (m)"; enabled: !!mail.message && !!root.displayedEnvelope && root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, true) }
+                            MailButton { objectName: "readerMarkUnread"; text: "●"; tooltipText: "Mark this message unread (u)"; enabled: !!mail.message && !!root.displayedEnvelope && !root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, false) }
+                            MailButton { text: "×"; tooltipText: "Close (q)"; onClicked: root.close() }
+                        }
+                        MailLabel {
+                            Layout.fillWidth: true
+                            visible: mail.listError !== "" || mail.actionError !== ""
+                            text: [mail.listError, mail.actionError].filter(function(error) { return !!error }).join("\n")
+                            wrapMode: Text.Wrap
+                            maximumLineCount: 4
+                            elide: Text.ElideRight
+                            color: Color.accent
+                        }
+                        ColumnLayout {
+                            visible: !!mail.message && !mail.reading && !mail.readError && !root.showHeaders
+                            Layout.fillWidth: true
+                            Layout.topMargin: 8
+                            Layout.bottomMargin: 8
+                            spacing: 4
+                            MailLabel { Layout.fillWidth: true; text: mail.accountLabel; opacity: 0.5; font.pixelSize: 11; elide: Text.ElideRight }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                MailLabel { Layout.fillWidth: true; text: mail.message ? root.senderName(mail.message.from) : ""; color: Color.accent; font.bold: true; elide: Text.ElideRight }
+                                MailLabel { Layout.maximumWidth: 90; elide: Text.ElideRight; text: mail.message ? root.shortDate(mail.message.date) : ""; opacity: 0.55; font.pixelSize: 11 }
+                            }
+                            MailLabel { Layout.fillWidth: true; text: mail.message ? "From  " + mail.message.from : ""; opacity: 0.55; font.pixelSize: 11; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight }
+                            MailLabel { Layout.fillWidth: true; text: mail.message ? "To    " + mail.message.to : ""; opacity: 0.55; font.pixelSize: 11; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight }
+                            MailLabel { Layout.fillWidth: true; text: mail.message ? "Date  " + mail.message.date : ""; opacity: 0.55; font.pixelSize: 11; elide: Text.ElideRight }
                         }
                         ColumnLayout {
                             visible: root.showLinks
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            Text { text: "Links · j/k select · Enter opens in browser · h back"; color: Color.foreground; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            MailLabel { text: "Links · j/k select · Enter opens in browser · h back"; color: Color.foreground; wrapMode: Text.Wrap; Layout.fillWidth: true }
                             ListView {
                                 id: linkList
                                 Layout.fillWidth: true
@@ -331,22 +392,22 @@ BarWidget {
                                     required property var modelData
                                     required property int index
                                     width: linkList.width
-                                    height: 56
-                                    radius: 4
+                                    height: 48
+                                    radius: 0
                                     color: index === root.linkIndex ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.18) : "transparent"
                                     border.width: index === root.linkIndex ? 1 : 0
                                     border.color: Color.accent
                                     Column {
                                         anchors.fill: parent
                                         anchors.margins: 7
-                                        Text { width: parent.width; text: "[" + (index + 1) + "] " + modelData.label; textFormat: Text.PlainText; color: Color.foreground; elide: Text.ElideRight }
-                                        Text { width: parent.width; text: modelData.url; textFormat: Text.PlainText; color: Color.foreground; opacity: 0.65; elide: Text.ElideMiddle }
+                                        MailLabel { width: parent.width; text: "[" + (index + 1) + "] " + modelData.label; textFormat: Text.PlainText; color: Color.foreground; elide: Text.ElideRight }
+                                        MailLabel { width: parent.width; text: modelData.url; textFormat: Text.PlainText; color: Color.foreground; opacity: 0.65; elide: Text.ElideMiddle }
                                     }
                                     MouseArea { anchors.fill: parent; onClicked: { root.linkIndex = index; linkList.forceActiveFocus() } }
                                 }
-                                Text { anchors.centerIn: parent; visible: !root.messageLinks.length; text: "No web links in this message."; color: Color.foreground }
+                                MailLabel { anchors.centerIn: parent; visible: !root.messageLinks.length; text: "No web links in this message."; color: Color.foreground }
                             }
-                            Text { text: "Destination (may contain tracking):"; color: Color.foreground; visible: !!root.selectedLink }
+                            MailLabel { text: "Destination (may contain tracking):"; color: Color.foreground; visible: !!root.selectedLink }
                             ScrollView {
                                 id: linkPreview
                                 contentWidth: availableWidth
@@ -355,6 +416,8 @@ BarWidget {
                                 visible: !!root.selectedLink
                                 clip: true
                                 TextArea {
+                                    font.family: Style.font.family
+                                    font.pixelSize: 12
                                     width: linkPreview.availableWidth
                                     text: root.selectedLink ? root.selectedLink.url : ""
                                     textFormat: TextEdit.PlainText
@@ -365,7 +428,7 @@ BarWidget {
                                     background: null
                                 }
                             }
-                            Button { text: "Open in browser (Enter)"; enabled: !!root.selectedLink && !root.busy; focusable: true; onClicked: root.openLink() }
+                            MailButton { text: "Open in browser (Enter)"; enabled: !!root.selectedLink && !root.busy; focusable: true; onClicked: root.openLink() }
                         }
                         ScrollView {
                             id: reader
@@ -385,24 +448,77 @@ BarWidget {
                                 textFormat: TextEdit.PlainText
                                 color: Color.foreground
                                 background: null
-                                font.pixelSize: 14
+                                font.family: Style.font.family
+                                // Native monospace metrics preserve plain-text spacing and copying.
+                                font.pixelSize: 13
+                                padding: 0
                                 onActiveFocusChanged: if (activeFocus && mail.selectedId) root.pane = "reader"
                                 text: mail.reading ? "Loading message…" : mail.readError ? mail.readError : mail.message ?
-                                    (mail.message.subject || "(No subject)") + "\n\nFrom: " + mail.message.from + "\nTo: " + mail.message.to + "\nDate: " + mail.message.date + "\n\n" + mail.message.body :
+                                    (root.showHeaders ? "Subject: " + mail.message.subject + "\nFrom: " + mail.message.from + "\nTo: " + mail.message.to + "\nDate: " + mail.message.date + "\n\n" : "") + mail.message.body :
                                     "Select a message with j/k, then press Enter to read.\n\nOpening a message does not mark it as read. Use m / u to change its status."
                                 onTextChanged: { cursorPosition = 0; reader.contentItem.contentY = 0 }
                             }
                         }
                     }
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: mail.marking ? "Updating message status…" : "o links · j/k navigate · Enter open · h back · n/p pages · m/u read/unread · ? help · q close"
-                    color: Color.foreground
-                    opacity: 0.65
-                    font.pixelSize: 11
-                    wrapMode: Text.Wrap
-                    textFormat: Text.PlainText
+            }
+            Rectangle {
+                id: helpOverlay
+                visible: root.showHelp
+                z: 10
+                anchors.left: parent.left
+                anchors.leftMargin: Math.min(68, parent.width * 0.08)
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 32
+                width: Math.min(360, parent.width - anchors.leftMargin)
+                height: Math.min(helpContent.implicitHeight + 24, parent.height - 40)
+                color: Color.background
+                border.color: Color.accent
+                border.width: 1
+                // Help floats over the inbox and never changes pane geometry.
+                MouseArea { anchors.fill: parent }
+                ScrollView {
+                    id: helpScroll
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    clip: true
+                    contentWidth: availableWidth
+                    ColumnLayout {
+                        id: helpContent
+                        width: helpScroll.availableWidth
+                        spacing: 8
+                        RowLayout {
+                            Layout.fillWidth: true
+                            MailLabel { Layout.fillWidth: true; text: "SHORTCUTS"; font.pixelSize: 10; font.letterSpacing: 1.5; opacity: 0.55 }
+                            MailButton { text: "×"; tooltipText: "Close help (Esc)"; onClicked: root.showHelp = false }
+                        }
+                        Repeater {
+                            model: [
+                                ["j k / ↓ ↑", "Move / scroll"],
+                                ["Enter / l / →", "Open message / link"],
+                                ["h / ←", "Back to body / list"],
+                                ["Tab", "Switch list / reader"],
+                                ["gg / G", "First / last"],
+                                ["Ctrl+d / u", "Half-page down / up"],
+                                ["n / p", "Older / newer page"],
+                                ["[ / ]", "Switch account"],
+                                ["o", "Show / hide links"],
+                                ["v", "Full selectable headers"],
+                                ["m / u", "Mark read / unread"],
+                                ["r", "Refresh inbox"],
+                                ["Ctrl+c", "Copy selected text"],
+                                ["?", "Toggle shortcuts"],
+                                ["Esc", "Dismiss / back / close"],
+                                ["q", "Close mail"]
+                            ]
+                            RowLayout {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                spacing: 8
+                                MailLabel { Layout.preferredWidth: 110; text: modelData[0]; font.pixelSize: 11 }
+                                MailLabel { Layout.fillWidth: true; text: modelData[1]; opacity: 0.6; font.pixelSize: 11; wrapMode: Text.Wrap }
+                            }
+                        }
+                    }
                 }
             }
         }

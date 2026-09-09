@@ -138,6 +138,36 @@ ShellRoot {
                 press(Qt.Key_M)
                 equal(mail.calls[6].id, "alpha/1", "clicking the reader restores the visible message as mark target")
             }
+            function test_full_selectable_headers() {
+                press(Qt.Key_Return)
+                mail.message = {subject: "Long subject ".repeat(50), from: "Sender <sender@example.test>",
+                    to: "Recipient <recipient@example.test>, ".repeat(40), date: "Malformed date ".repeat(100), body: "Body"}
+                press(Qt.Key_V)
+                check(widget.showHeaders, "full metadata view enabled")
+                check(area.activeFocus, "metadata is selectable in reader")
+                check(area.text.indexOf(mail.message.subject) !== -1, "complete subject retained")
+                check(area.text.indexOf(mail.message.to) !== -1, "all recipients accessible")
+                check(area.text.indexOf(mail.message.date) !== -1, "malformed date accessible without overflowing header")
+                press(Qt.Key_V)
+                check(!widget.showHeaders)
+                equal(area.text, "Body")
+            }
+            function test_reader_toolbar_targets_displayed_message() {
+                var readButton = find(widget, function(item) { return item.objectName === "readerMarkRead" })
+                var unreadButton = find(widget, function(item) { return item.objectName === "readerMarkUnread" })
+                check(readButton !== null && unreadButton !== null, "reader actions found")
+                press(Qt.Key_Return)
+                press(Qt.Key_H); press(Qt.Key_J)
+                equal(widget.cursorId, "alpha/2")
+                equal(mail.selectedId, "alpha/1")
+                mouseClick(readButton, readButton.width / 2, readButton.height / 2); wait(30)
+                equal(mail.calls[1].id, "alpha/1", "reader toolbar ignores list cursor")
+                equal(mail.calls[1].seen, true)
+                check(mail.messages[1].unread, "other message remains untouched")
+                mouseClick(unreadButton, unreadButton.width / 2, unreadButton.height / 2); wait(30)
+                equal(mail.calls[2].id, "alpha/1")
+                equal(mail.calls[2].seen, false)
+            }
             function test_busy_guards() {
                 var flags = ["loading", "reading", "marking"]
                 for (var i = 0; i < flags.length; i++) {
@@ -197,7 +227,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 8)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 10)
                     console.log("JITSMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

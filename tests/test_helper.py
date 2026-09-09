@@ -53,6 +53,18 @@ class HelperTest(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
         self.assertFalse(run.call_args.kwargs.get("shell", False))
 
+    def test_internationalized_sender_addresses(self):
+        envelopes = [{"id": "1", "from": [
+            {"name": "Alex", "email": "用户@example.test"},
+            {"name": "李", "email": "li@example.test"},
+        ]}]
+        with patch("subprocess.run", return_value=subprocess.CompletedProcess(
+                [], 0, json.dumps({"envelopes": envelopes}).encode(), b"")):
+            status, result = self.invoke("list")
+        self.assertEqual(status, 0)
+        self.assertEqual(result["messages"][0]["from"],
+                         "Alex <用户@example.test>, 李 <li@example.test>")
+
     def test_read_argv_keeps_id_literal_and_never_marks_seen(self):
         with patch("subprocess.run", return_value=subprocess.CompletedProcess(
                 [], 0, b"Subject: Hello\r\n\r\nBody\r\n", b"")) as run:

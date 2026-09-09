@@ -7,7 +7,6 @@ import subprocess
 import sys
 from email import policy
 from email.parser import BytesParser
-from email.utils import formataddr
 from html.parser import HTMLParser
 
 
@@ -98,9 +97,9 @@ def list_messages(args):
             senders = []
             for address in envelope.get("from", []):
                 name, email = address.get("name"), address["email"]
-                # Keep Unicode names readable rather than RFC-2047 encoding them.
-                senders.append(formataddr((name, email)) if name and name.isascii()
-                               else f"{name} <{email}>" if name else email)
+                # Display text, not an RFC-5322 address to send. formataddr()
+                # rejects internationalized addresses even with an ASCII name.
+                senders.append(f"{name} <{email}>" if name else email)
             seen = any(flag.get("iana") == "seen" or
                        flag.get("raw", "").lower().lstrip("\\$") == "seen"
                        for flag in envelope.get("flags", []))

@@ -5,6 +5,16 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 omarchy_shell=${OMARCHY_SHELL_PATH:-/usr/share/omarchy/shell}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+# Fail closed if a regression accidentally runs Himalaya outside demo mode.
+mkdir "$work/bin"
+cat > "$work/bin/himalaya" <<'SH'
+#!/bin/sh
+printf 'Unexpected Himalaya invocation\n' >> "$JITSMAIL_NETWORK_GUARD"
+exit 99
+SH
+chmod +x "$work/bin/himalaya"
+export JITSMAIL_NETWORK_GUARD="$work/himalaya-invoked"
+export PATH="$work/bin:$PATH"
 ln -s "$omarchy_shell/Commons" "$work/Commons"
 ln -s "$omarchy_shell/Ui" "$work/Ui"
 ln -s "$root" "$work/Jitsmail"
@@ -35,6 +45,10 @@ ShellRoot {
 }
 QML
 QT_QPA_PLATFORM=${QT_QPA_PLATFORM:-offscreen} quickshell -p "$work" --no-color 2>&1 | tee "$work/output"
+if [[ -e "$JITSMAIL_NETWORK_GUARD" ]]; then
+    printf 'Demo unexpectedly attempted to invoke Himalaya.\n' >&2
+    exit 1
+fi
 if [[ ${JITSMAIL_INTERACTIVE:-0} == 1 ]]; then exit 0; fi
 grep -q 'JITSMAIL_SMOKE_OK' "$work/output"
 if grep -Eq 'TypeError|ReferenceError|Unable to assign|Failed to load configuration|SMOKE FAILED|SMOKE TIMEOUT' "$work/output"; then exit 1; fi

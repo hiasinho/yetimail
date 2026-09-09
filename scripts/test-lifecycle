@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+# Offline integration regressions against the real QML and Quickshell Process API.
+# python3 is always a shell fixture (or absent); no helper/account is ever opened.
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+omarchy_shell=${OMARCHY_SHELL_PATH:-/usr/share/omarchy/shell}
+quickshell=$(command -v quickshell)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+ln -s "$omarchy_shell/Commons" "$work/Commons"
+# PanelWindow has no offscreen backend. Keep the actual shared Ui types,
+# replacing only the compositor popup container (not Widget or MailService).
+mkdir "$work/Ui"
+for source in "$omarchy_shell"/Ui/*; do
+    [[ ${source##*/} == KeyboardPanel.qml ]] || ln -s "$source" "$work/Ui/${source##*/}"
+done
+cat > "$work/Ui/KeyboardPanel.qml" <<'QML'
+import QtQuick
+Item {
+    property Item anchorItem
+    property QtObject bar
+    property var owner
+    property bool open: false
+    property Item focusTarget
+    property int padding: 0
+    property int contentWidth: 940
+    property int contentHeight: 580
+    property int availableCardWidth: 1000
+    property int availableCardHeight: 700
+    width: contentWidth
+    height: contentHeight
+    visible: open
+}
+QML
+ln -s "$root" "$work/Jitsmail"
+mkdir "$work/bin"
+cat > "$work/bin/himalaya" <<'SH'
+#!/bin/sh
+printf 'FORBIDDEN Himalaya invocation\n' >> "$JITSMAIL_CALLS"
+exit 99
+SH
+chmod +x "$work/bin/himalaya"
+cat > "$work/python-fixture" <<'SH'
+#!/bin/sh
+# Deliberately do not execute argv[1] (the production Python helper).
+shift
+operation=$1; shift
+account=default config=none demo=false id=none
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --account) account=$2; shift 2 ;;
+        --config) config=$2; shift 2 ;;
+        --demo) demo=true; shift ;;
+        --id) id=$2; shift 2 ;;
+        *) printf 'BAD ARGUMENT\n' >> "$JITSMAIL_CALLS"; exit 98 ;;
+    esac
+done
+printf '%s account=%s config=%s demo=%s id=%s\n' "$operation" "$account" "$config" "$demo" "$id" >> "$JITSMAIL_CALLS"
+/usr/bin/sleep 0.25
+if [ "$operation" = list ]; then
+    printf '{"account":"%s","messages":[{"id":"%s/%s","from":"Fixture","subject":"Offline","date":"today","unread":true}]}\n' "$account" "$account" "$config"
+else
+    printf '{"id":"%s","subject":"Offline","body":"fixture"}\n' "$id"
+fi
+SH
+chmod +x "$work/python-fixture"
+cat > "$work/shell.qml" <<'QML'
+import QtQuick
+import Quickshell
+import "Jitsmail"
+ShellRoot {
+    id: test
+    property string scenario: Quickshell.env("JITSMAIL_SCENARIO")
+    property int phase: 0
+    property int ticks: 0
+    property bool failed: false
+    property var widget: null
+    property var widgetMail: null
+    function fail(reason) {
+        failed = true
+        console.error("LIFECYCLE_FAIL " + scenario + ": " + reason)
+        Qt.quit()
+    }
+    function check(ok, reason) { if (!ok) fail(reason); return ok }
+    function pass() { if (!failed) console.log("LIFECYCLE_OK " + scenario); Qt.quit() }
+    Component { id: widgetFactory; Widget {} }
+    FloatingWindow { id: window; visible: true; implicitWidth: 1000; implicitHeight: 700 }
+    MailService {
+        id: service
+        active: false
+        onMessagesChanged: {
+            if (test.scenario === "race" && messages.length && messages[0].id !== account + "/" + config)
+                test.fail("accepted stale list: " + messages[0].id)
+        }
+        onMessageChanged: {
+            if (test.scenario === "race" && message && message.id !== "fresh")
+                test.fail("accepted stale read: " + message.id)
+        }
+    }
+    Component.onCompleted: {
+        if (scenario === "widget") {
+            widget = widgetFactory.createObject(window.contentItem)
+            if (!check(widget !== null, "could not construct Widget")) return
+            // MailService is a direct visual child; no production-only test API needed.
+            for (var i = 0; i < widget.children.length; i++) {
+                var child = widget.children[i]
+                if (typeof child.readMessage === "function") widgetMail = child
+            }
+            check(widgetMail !== null, "could not find Widget MailService")
+        }
+    }
+    Timer {
+        interval: 25; repeat: true; running: true
+        onTriggered: {
+            test.ticks++
+            if (test.failed) return
+            if (test.ticks > 200) { test.fail("timeout at phase " + test.phase); return }
+            if (test.scenario === "widget") {
+                if (test.phase === 0) {
+                    if (!test.check(!test.widgetMail.loading && !test.widgetMail.messages.length && !test.widgetMail.listError,
+                                    "launched before host settings injection")) return
+                    if (test.ticks < 12) return
+                    console.log("LIFECYCLE_INJECT_SETTINGS")
+                    test.widget.settings = {demo: true, account: "widget", config: "widget-config"}
+                    test.phase = 1
+                } else if (test.widgetMail.messages.length) {
+                    if (!test.check(test.widgetMail.demo && test.widgetMail.messages[0].id === "widget/widget-config", "injected demo settings ignored")) return
+                    test.pass()
+                }
+                return
+            }
+            if (test.scenario === "missing" || test.scenario === "unlaunchable") {
+                if (test.phase === 0) {
+                    service.active = true
+                    service.refresh()
+                    service.readMessage("missing")
+                    test.phase = 1
+                } else if (service.listError && service.readError) {
+                    if (!test.check(!service.loading && !service.reading && !service.messages.length && !service.message,
+                                    "failed launch left a latch or successful result")) return
+                    console.log("LIFECYCLE_ERRORS list=" + service.listError + " read=" + service.readError)
+                    test.pass()
+                }
+                return
+            }
+            if (test.phase === 0) {
+                service.account = "old"
+                service.config = "old-config"
+                service.active = true
+                service.refresh()
+                if (!test.check(service.loading, "list loading latch not synchronous")) return
+                service.account = "middle"
+                service.config = "middle-config"
+                service.refresh()
+                test.phase = 1
+            } else if (test.phase === 1) {
+                // Also invalidate after Process has had a chance to start.
+                service.account = "final"
+                service.config = "final-config"
+                service.refresh()
+                test.phase = 2
+            } else if (test.phase === 2 && service.messages.length && !service.loading) {
+                service.readMessage("stale")
+                if (!test.check(service.reading, "read latch not synchronous")) return
+                service.readMessage("duplicate")
+                service.config = "changed-for-read"
+                test.phase = 3
+            } else if (test.phase === 3 && !service.reading) {
+                if (!test.check(service.message === null, "stale read survived reset")) return
+                // Stop list refreshes before changing config back; stale in-flight
+                // list output must also remain discarded while inactive.
+                service.active = false
+                service.config = "final-config"
+                test.phase = 4
+            } else if (test.phase === 4 && !service.loading) {
+                service.active = true
+                service.readMessage("fresh")
+                test.phase = 5
+            } else if (test.phase === 5 && service.message) {
+                if (!test.check(!service.readError && !service.listError, "unexpected helper error")) return
+                test.pass()
+            }
+        }
+    }
+}
+QML
+status=0
+for scenario in widget race missing unlaunchable; do
+    printf '\n=== lifecycle: %s ===\n' "$scenario"
+    rm -f "$work/bin/python3"
+    case "$scenario" in
+        widget|race) cp "$work/python-fixture" "$work/bin/python3" ;;
+        unlaunchable)
+            printf '#!/jitsmail-test/nonexistent-interpreter\n' > "$work/bin/python3"
+            chmod +x "$work/bin/python3" ;;
+    esac
+    export JITSMAIL_SCENARIO="$scenario" JITSMAIL_CALLS="$work/$scenario.calls"
+    : > "$JITSMAIL_CALLS"
+    # Restrict PATH, including missing-python tests: never fall back to real Python.
+    if ! QT_QPA_PLATFORM=offscreen PATH="$work/bin" \
+        /usr/bin/timeout --kill-after=2 10 "$quickshell" -p "$work" --no-color > "$work/$scenario.output" 2>&1; then
+        printf 'LIFECYCLE_FAIL %s: shell failed or exceeded hard timeout\n' "$scenario"
+        status=1
+    fi
+    cat "$work/$scenario.output"
+    printf '%s\n' '--- fixture calls ---'
+    cat "$JITSMAIL_CALLS"
+    if ! grep -q "LIFECYCLE_OK $scenario" "$work/$scenario.output" ||
+       grep -Eq 'LIFECYCLE_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration' "$work/$scenario.output" ||
+       grep -Eq 'FORBIDDEN|BAD ARGUMENT' "$JITSMAIL_CALLS"; then status=1; fi
+    case "$scenario" in
+        widget)
+            if [[ $(wc -l < "$JITSMAIL_CALLS") != 1 ]] ||
+               ! grep -qx 'list account=widget config=widget-config demo=true id=none' "$JITSMAIL_CALLS"; then
+                echo 'LIFECYCLE_FAIL widget: unexpected launch count or non-demo invocation'; status=1
+            fi ;;
+        race)
+            if [[ $(grep -c '^read ' "$JITSMAIL_CALLS") != 2 ]] || grep -q 'id=duplicate' "$JITSMAIL_CALLS"; then
+                echo 'LIFECYCLE_FAIL race: duplicate or missing read launch'; status=1
+            fi ;;
+        missing|unlaunchable)
+            if [[ -s "$JITSMAIL_CALLS" ]]; then echo 'LIFECYCLE_FAIL unexpected executable invocation'; status=1; fi ;;
+    esac
+done
+if [[ $status == 0 ]]; then echo 'JITSMAIL_LIFECYCLE_OK'; fi
+exit "$status"

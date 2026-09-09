@@ -62,11 +62,14 @@ An empty `account` or `config` uses Himalaya's default. A nonempty config is a p
 ```sh
 python3 -m unittest discover -s tests -v
 scripts/smoke-ui
+scripts/test-lifecycle
 bin/jitsmail-helper list --demo
 bin/jitsmail-helper read --demo --id demo-1
 ```
 
-The smoke test launches a temporary **offscreen** Quickshell with demo data, tests the QML → helper → inbox/read round trip, then exits. It does not install/enable anything or access your mail. Override `OMARCHY_SHELL_PATH` if Omarchy's shell is elsewhere.
+The smoke test launches a temporary **offscreen** Quickshell with demo data, tests the QML → helper → inbox/read round trip, then exits. It does not install/enable anything or access your mail. Override `OMARCHY_SHELL_PATH` if Omarchy's shell is elsewhere. A guard executable prevents accidental Himalaya access even if demo mode regresses.
+
+The lifecycle tests use shell fixtures instead of Python/Himalaya to check delayed host settings, overlapping requests, stale-result rejection, and failed launches. They replace only the compositor popup container for offscreen operation. Missing-executable warnings are expected in these tests.
 
 For an interactive demo:
 

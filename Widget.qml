@@ -14,6 +14,9 @@ BarWidget {
 
     MailService {
         id: mail
+        // The host injects bar/settings after construction. Do not query the
+        // default account before those settings have arrived.
+        active: root.bar !== null || demo
         account: String(root.setting("account", ""))
         config: String(root.setting("config", ""))
         demo: root.setting("demo", false) === true

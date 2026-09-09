@@ -86,7 +86,8 @@ class HTMLText(HTMLParser):
     """Extract inert text; never render markup or load external resources."""
 
     hidden = {"script", "style", "head", "iframe", "object", "template"}
-    blocks = {"p", "div", "br", "hr", "li", "tr", "h1", "h2", "h3", "blockquote"}
+    paragraphs = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote"}
+    blocks = {"div", "hr", "li", "tr"}
 
     void = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
             "meta", "param", "source", "track", "wbr"}
@@ -98,12 +99,30 @@ class HTMLText(HTMLParser):
         self.pending = []
         self.suppressed = []
         self.anchor = None
+        self.breaks = 0
+
+    def boundary(self, count=1, explicit=False):
+        # Block edges coalesce; explicit <br>s add lines (including empty ones).
+        if self.anchor is not None:
+            # Anchor labels remain compact prose, with whitespace between blocks.
+            self.anchor[1].append("\n" * count)
+        else:
+            self.breaks = min(2, self.breaks + count) if explicit else max(self.breaks, count)
+
+    def with_breaks(self, text):
+        if not self.breaks:
+            return text
+        if not text.strip():
+            return ""
+        text = "\n" * self.breaks + text.lstrip()
+        self.breaks = 0
+        return text
 
     def append(self, text):
         if self.anchor is not None:
             self.anchor[1].append(text)
         else:
-            self.pending.append(text)
+            self.pending.append(self.with_breaks(text))
 
     def flush_text(self):
         # Inline markup can split a URL across arbitrarily many text nodes.
@@ -119,11 +138,12 @@ class HTMLText(HTMLParser):
         reference = self.links.add(url, label)
         if reference:
             # URL-shaped labels are not useful prose and can be enormous.
-            self.parts.append((self.links.text(label) + " "
-                               if label and not self.links.pattern.fullmatch(label)
-                               else "") + reference)
+            text = (self.links.text(label) + " "
+                    if label and not self.links.pattern.fullmatch(label)
+                    else "") + reference
         else:
-            self.parts.append(self.links.text(label))
+            text = self.links.text(label)
+        self.parts.append(self.with_breaks(text))
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -139,8 +159,12 @@ class HTMLText(HTMLParser):
             self.finish_anchor()
             self.flush_text()
             self.anchor = (attrs.get("href") or "", [])
-        if tag in self.blocks:
-            self.append("\n")
+        if tag == "br":
+            self.boundary(explicit=True)
+        elif tag in self.paragraphs:
+            self.boundary(2)
+        elif tag in self.blocks:
+            self.boundary()
 
     def handle_endtag(self, tag):
         if self.suppressed:
@@ -150,8 +174,10 @@ class HTMLText(HTMLParser):
             return
         if tag == "a":
             self.finish_anchor()
-        if tag in self.blocks:
-            self.append("\n")
+        if tag in self.paragraphs:
+            self.boundary(2)
+        elif tag in self.blocks:
+            self.boundary()
 
     def handle_startendtag(self, tag, attrs):
         self.handle_starttag(tag, attrs)
@@ -159,15 +185,14 @@ class HTMLText(HTMLParser):
 
     def handle_data(self, data):
         if not self.suppressed:
-            self.append(data)
+            # Source formatting is HTML whitespace, not a displayed line break.
+            self.append(re.sub(r"[ \t\r\n\f]+", " ", data))
 
     def text(self):
         self.finish_anchor()
         self.flush_text()
-        return "\n".join(
-            line for line in (" ".join(line.split()) for line in "".join(self.parts).splitlines())
-            if line
-        )
+        text = "\n".join(" ".join(line.split()) for line in "".join(self.parts).split("\n"))
+        return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def run_himalaya(args, command):

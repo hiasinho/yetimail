@@ -62,6 +62,10 @@ BarWidget {
         return Qt.formatDateTime(date, date.toDateString() === new Date().toDateString() ? "HH:mm" : "MMM d")
     }
 
+    function headerDate(value) {
+        var date = new Date(value)
+        return isNaN(date.getTime()) ? String(value || "") : Qt.formatDateTime(date, "MMM d  HH:mm")
+    }
     function toggleHeaders() {
         if (showHelp || !mail.message || busy) return
         showHeaders = !showHeaders
@@ -369,11 +373,9 @@ BarWidget {
                             RowLayout {
                                 Layout.fillWidth: true
                                 MailLabel { Layout.fillWidth: true; text: mail.message ? root.senderName(mail.message.from) : ""; color: Color.accent; font.bold: true; elide: Text.ElideRight }
-                                MailLabel { Layout.maximumWidth: 90; elide: Text.ElideRight; text: mail.message ? root.shortDate(mail.message.date) : ""; opacity: 0.55; font.pixelSize: 11 }
+                                MailLabel { Layout.maximumWidth: 125; elide: Text.ElideRight; text: mail.message ? root.headerDate(mail.message.date) : ""; opacity: 0.55; font.pixelSize: 11 }
                             }
-                            MailLabel { Layout.fillWidth: true; text: mail.message ? "From  " + mail.message.from : ""; opacity: 0.55; font.pixelSize: 11; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight }
                             MailLabel { Layout.fillWidth: true; text: mail.message ? "To    " + mail.message.to : ""; opacity: 0.55; font.pixelSize: 11; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight }
-                            MailLabel { Layout.fillWidth: true; text: mail.message ? "Date  " + mail.message.date : ""; opacity: 0.55; font.pixelSize: 11; elide: Text.ElideRight }
                         }
                         ColumnLayout {
                             visible: root.showLinks

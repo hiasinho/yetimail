@@ -249,11 +249,72 @@ Caf=E9 plain
 <img src="https://tracker.test/pixel"><p>Second <b>line</b><br>Next</p>
 <iframe src="https://tracker.test">hidden frame</iframe></body></html>'''
         self.assertEqual(helper["parse_message"](raw, "1")["body"],
-                         "Hello & welcome\nSecond line\nNext")
+                         "Hello & welcome\n\nSecond line\nNext")
 
     def parse_body(self, body, content_type="text/html"):
         return helper["parse_message"](
             (f"Content-Type: {content_type}; charset=utf-8\n\n" + body).encode(), "1")
+
+    def test_html_paragraph_greeting_and_signature(self):
+        result = self.parse_body(
+            '<p>Hi Alex,</p><p>Thanks for <strong>your help</strong>.</p>'
+            '<p>Best,<br>Sam</p>')
+        self.assertEqual(result["body"], "Hi Alex,\n\nThanks for your help.\n\nBest,\nSam")
+
+    def test_html_headings_and_nested_blockquotes_are_paragraphs(self):
+        for heading in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            with self.subTest(heading=heading):
+                result = self.parse_body(
+                    f'<div><{heading}>Title</{heading}><p>Intro</p>'
+                    '<blockquote><div>Quoted <em>first</em></div>'
+                    '<div>second</div></blockquote><p>Reply</p></div>')
+                self.assertEqual(result["body"], "Title\n\nIntro\n\nQuoted first\nsecond\n\nReply")
+
+    def test_html_gmail_div_lines_and_explicit_blank_paragraphs(self):
+        for body in (
+            '<div>Hi,</div><div><br></div><div>First line</div>'
+            '<div>Second line</div><div><br></div><div>Sam</div>',
+            '<div>Hi,<br><br>First line<br>Second line<br><br>Sam</div>',
+            '<div><div>Hi,</div><div><br/></div><div>First line<br></div>'
+            '<div>Second line</div><div><br/></div><div>Sam</div></div>',
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(self.parse_body(body)["body"],
+                                 "Hi,\n\nFirst line\nSecond line\n\nSam")
+
+    def test_html_source_whitespace_is_not_a_line_break(self):
+        result = self.parse_body('''
+            <div>
+                Hello <b>dear
+                friend</b>,
+                welcome.
+            </div>
+            <div>
+                Read <a href="https://example.test/">the
+                <em>guide</em></a> now.
+            </div>
+        ''')
+        self.assertEqual(result["body"], "Hello dear friend, welcome.\nRead the guide [1] now.")
+        self.assertEqual(result["links"], [{"label": "the guide", "url": "https://example.test/"}])
+
+    def test_html_repeated_breaks_are_capped_and_edges_trimmed(self):
+        result = self.parse_body(
+            '<br><br/><p>First</p>\n<br> <br/>\n<p>Second</p>'
+            '<div><br></div><div><br></div>Third<br>\n<br> <br/>Fourth<br><br>')
+        self.assertEqual(result["body"], "First\n\nSecond\n\nThird\n\nFourth")
+
+    def test_hidden_blocks_and_breaks_do_not_change_visible_spacing(self):
+        result = self.parse_body(
+            '<div>First<span hidden><p>Secret</p><br><br>'
+            '<a href="https://hidden.test/">Hidden</a></span> line</div>'
+            '<div style="display:none"><p>Secret</p><br></div>'
+            '<div>Second<br hidden> line</div>')
+        self.assertEqual(result["body"], "First line\nSecond line")
+        self.assertEqual(result["links"], [])
+
+    def test_plaintext_internal_whitespace_is_unchanged(self):
+        body = "Hi,\r\n\r\n\r\n  Indented\ttext.\r\nWrapped\nline.\n\n\n\nSam"
+        self.assertEqual(self.parse_body(body, "text/plain")["body"], body)
 
     def test_plaintext_links_preserve_prose_order_and_deduplicate(self):
         result = self.parse_body(
@@ -293,7 +354,7 @@ Caf=E9 plain
             '<p>Again https<span>://example.</span>test/reset?token=abc '
             '<a href="https://other.test/">Other</a> '
             'https://last.test/<em>path</em>?x=1&amp;y=2.</p>')
-        self.assertEqual(result["body"], "Reset [1].\nAgain [1] Other [2] [3].")
+        self.assertEqual(result["body"], "Reset [1].\n\nAgain [1] Other [2] [3].")
         self.assertEqual(result["links"], [
             {"label": "example.test", "url": "https://example.test/reset?token=abc"},
             {"label": "Other", "url": "https://other.test/"},
@@ -304,7 +365,7 @@ Caf=E9 plain
         result = self.parse_body(
             '<p>https://example.test/<span hidden>tracking</span><b>help</b></p>'
             '<p>details</p>https://other.test/<br>not-a-path')
-        self.assertEqual(result["body"], "[1]\ndetails\n[2]\nnot-a-path")
+        self.assertEqual(result["body"], "[1]\n\ndetails\n\n[2]\nnot-a-path")
         self.assertEqual(result["links"], [
             {"label": "example.test", "url": "https://example.test/help"},
             {"label": "other.test", "url": "https://other.test/"},
@@ -329,7 +390,7 @@ Caf=E9 plain
             '<p>See <a href="https://example.test/?a=1&amp;b=2">Read <b>the</b> &amp; learn</a>.</p>'
             '<p><a href="https://example.test/?a=1&amp;b=2">Again</a> or '
             'https://other.test/docs.</p>')
-        self.assertEqual(result["body"], "See Read the & learn [1].\nAgain [1] or [2].")
+        self.assertEqual(result["body"], "See Read the & learn [1].\n\nAgain [1] or [2].")
         self.assertEqual(result["links"], [
             {"label": "Read the & learn", "url": "https://example.test/?a=1&b=2"},
             {"label": "other.test", "url": "https://other.test/docs"},
@@ -371,7 +432,7 @@ Caf=E9 plain
 <div aria-hidden="true"><img src="https://pixel.test/">Invisible</div>
 <template><a href="https://template.test/">Template</a></template>
 <p><a href="https://visible.test/">Visible link</a></p>''')
-        self.assertEqual(result["body"], "Visible\nVisible link [1]")
+        self.assertEqual(result["body"], "Visible\n\nVisible link [1]")
         self.assertEqual(result["links"], [{"label": "Visible link", "url": "https://visible.test/"}])
 
     def test_html_exact_targets_keep_punctuation_and_https_case(self):

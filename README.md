@@ -7,7 +7,7 @@ A keyboard-first Omarchy mail panel powered by **Himalaya 2.1**. Read and manage
 - Optional account selector restricted to an explicit allowlist; only the selected account is queried.
 - Unread badge counts **only the current page**, not the whole mailbox.
 - Automatic refresh every 120 seconds, plus Refresh / Ctrl+R.
-- Plain-text message display, including inert HTML-to-text fallback.
+- Safe text-only message display with compact numbered web links and destination previews.
 - Explicit mark-read / mark-unread actions. Opening a message does **not** mark it seen.
 - No sending, deleting, or remote images.
 - Demo mode requires no account and never invokes Himalaya.
@@ -70,7 +70,9 @@ All commands work inside the panel, including while the selectable message text 
 | --- | --- |
 | `j` / `k`, `↓` / `↑` | Select next/previous message in list; scroll in reader |
 | `Enter`, `l`, `→` | Open the highlighted message and focus reader |
-| `h`, `←` | Focus list |
+| `h`, `←` | Return from links to reader, or reader to list |
+| `o` | Toggle the reader's link list |
+| `j` / `k`, `Enter` in links | Select a link; explicitly open its destination in the browser |
 | `Tab`, `Shift+Tab` | Switch panes (opens highlighted message if needed) |
 | `gg` / `G` | First/last row on this page; top/bottom of reader |
 | `Ctrl+d` / `Ctrl+u` | Half-page down/up in active pane |
@@ -79,13 +81,19 @@ All commands work inside the panel, including while the selectable message text 
 | `m` / `u` | Mark target message read/unread |
 | `r`, `Ctrl+r` | Refresh current page |
 | `?` | Toggle shortcut help |
-| `Esc` | Dismiss help, then return to list, then close panel |
+| `Esc` | Dismiss help, return from links to reader to list, then close panel |
 | `q` | Close panel |
 | `Ctrl+c` | Copy selected message text |
 
 Status changes target the highlighted row in list mode, or the open message in reader mode. Only explicit `m`/`u` commands or their buttons change server flags. Real status changes require an explicitly selected account (not an unnamed default); the `hiash,hiasinho` allowlist supplies this. Actions wait for server success before updating the badge; failures leave the old status intact. No automatic marking when opening or navigating.
 
 Older/newer navigation preserves the current page on failure. A full page enables Older; an exact multiple of 50 can therefore have a final empty page. IMAP pages can shift as new mail arrives. Account switching returns to page 1.
+
+## Reading links
+
+Long web URLs become compact references such as `[1]` in the message body. In the reader, press `o` for the link list, use `j/k` to select, inspect the destination preview, then press `Enter` to open it in your default browser. `h` or `Esc` returns to the body. Mouse clicks select a link; the Open button opens it.
+
+Only HTTP(S) destinations are supported. Links are never opened automatically; remote images and scripts remain blocked. Original destinations, including tracking parameters, are preserved—we do not follow redirects or silently rewrite URLs. The displayed sender-provided label is not proof of the destination's identity; check the URL before opening. Opening a link can trigger tracking in your browser.
 
 ## Develop and test
 

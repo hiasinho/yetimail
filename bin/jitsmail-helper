@@ -3,11 +3,13 @@
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from email import policy
 from email.parser import BytesParser
 from html.parser import HTMLParser
+from urllib.parse import urlsplit
 
 
 TIMEOUT = 30
@@ -23,29 +25,133 @@ class Parser(argparse.ArgumentParser):
         raise HelperError(message)
 
 
+class MessageLinks:
+    """Collect inert HTTP(S) destinations in first-display order."""
+
+    pattern = re.compile(r"https?://[^\s<>\"'\x00-\x1f\x7f]+", re.IGNORECASE)
+
+    def __init__(self):
+        self.links = []
+        self.numbers = {}
+
+    def add(self, url, label=""):
+        url = url.strip()
+        if any(character.isspace() or ord(character) < 32 or ord(character) == 127
+               for character in url) or "\\" in url:
+            return None
+        try:
+            parsed = urlsplit(url)
+            if (parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname
+                    or parsed.username is not None or parsed.password is not None):
+                return None
+            parsed.port  # Reject malformed ports, including out-of-range values.
+        except ValueError:
+            return None
+        if url not in self.numbers:
+            label = " ".join(label.split())
+            if not label or self.pattern.fullmatch(label):
+                label = parsed.hostname
+            self.links.append({"label": label[:160], "url": url})
+            self.numbers[url] = len(self.links)
+        return f"[{self.numbers[url]}]"
+
+    def text(self, text):
+        def replace(match):
+            original = match.group()
+            url = original
+            # Explicit angle brackets or quotes delimit the exact destination.
+            opening = text[match.start() - 1:match.start()] if match.start() else ""
+            closing = text[match.end():match.end() + 1]
+            delimited = opening in {"<", '"', "'"} and closing == {
+                "<": ">", '"': '"', "'": "'",
+            }.get(opening)
+            # Only undelimited prose needs punctuation heuristics.
+            while url and not delimited:
+                if url[-1] in ".,;:!?":
+                    url = url[:-1]
+                elif url[-1] in ")]}":
+                    closing = url[-1]
+                    opening = {")": "(", "]": "[", "}": "{"}[closing]
+                    if url.count(closing) <= url.count(opening):
+                        break
+                    url = url[:-1]
+                else:
+                    break
+            reference = self.add(url)
+            return reference + original[len(url):] if reference else original
+        return self.pattern.sub(replace, text)
+
+
 class HTMLText(HTMLParser):
     """Extract inert text; never render markup or load external resources."""
 
     hidden = {"script", "style", "head", "iframe", "object", "template"}
     blocks = {"p", "div", "br", "hr", "li", "tr", "h1", "h2", "h3", "blockquote"}
 
-    def __init__(self):
+    void = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+            "meta", "param", "source", "track", "wbr"}
+
+    def __init__(self, links):
         super().__init__(convert_charrefs=True)
+        self.links = links
         self.parts = []
+        self.pending = []
         self.suppressed = []
+        self.anchor = None
+
+    def append(self, text):
+        if self.anchor is not None:
+            self.anchor[1].append(text)
+        else:
+            self.pending.append(text)
+
+    def flush_text(self):
+        # Inline markup can split a URL across arbitrarily many text nodes.
+        self.parts.append(self.links.text("".join(self.pending)))
+        self.pending.clear()
+
+    def finish_anchor(self):
+        if self.anchor is None:
+            return
+        url, parts = self.anchor
+        self.anchor = None
+        label = " ".join("".join(parts).split())
+        reference = self.links.add(url, label)
+        if reference:
+            # URL-shaped labels are not useful prose and can be enormous.
+            self.parts.append((self.links.text(label) + " "
+                               if label and not self.links.pattern.fullmatch(label)
+                               else "") + reference)
+        else:
+            self.parts.append(self.links.text(label))
 
     def handle_starttag(self, tag, attrs):
-        if tag in self.hidden:
-            self.suppressed.append(tag)
-        elif not self.suppressed and tag in self.blocks:
-            self.parts.append("\n")
+        attrs = dict(attrs)
+        style = re.sub(r"\s+", "", attrs.get("style") or "").lower()
+        hidden = (tag in self.hidden or "hidden" in attrs
+                  or (attrs.get("aria-hidden") or "").lower() == "true"
+                  or re.search(r"(?:^|;)(?:display:none|visibility:hidden)(?:!important)?(?:;|$)", style))
+        if self.suppressed or hidden:
+            if tag not in self.void:
+                self.suppressed.append(tag)
+            return
+        if tag == "a":
+            self.finish_anchor()
+            self.flush_text()
+            self.anchor = (attrs.get("href") or "", [])
+        if tag in self.blocks:
+            self.append("\n")
 
     def handle_endtag(self, tag):
         if self.suppressed:
-            if tag == self.suppressed[-1]:
-                self.suppressed.pop()
-        elif tag in self.blocks:
-            self.parts.append("\n")
+            if tag in self.suppressed:
+                index = len(self.suppressed) - 1 - self.suppressed[::-1].index(tag)
+                del self.suppressed[index:]
+            return
+        if tag == "a":
+            self.finish_anchor()
+        if tag in self.blocks:
+            self.append("\n")
 
     def handle_startendtag(self, tag, attrs):
         self.handle_starttag(tag, attrs)
@@ -53,9 +159,11 @@ class HTMLText(HTMLParser):
 
     def handle_data(self, data):
         if not self.suppressed:
-            self.parts.append(data)
+            self.append(data)
 
     def text(self):
+        self.finish_anchor()
+        self.flush_text()
         return "\n".join(
             line for line in (" ".join(line.split()) for line in "".join(self.parts).splitlines())
             if line
@@ -118,8 +226,9 @@ def list_messages(args):
 
 def parse_message(raw, message_id):
     message = BytesParser(policy=policy.default).parsebytes(raw)
-    part = message.get_body(preferencelist=("plain", "html"))
+    part = message.get_body(preferencelist=("html", "plain"))
     body = ""
+    links = MessageLinks()
     if part is not None:
         payload = part.get_payload(decode=True)
         if payload is not None:
@@ -128,22 +237,24 @@ def parse_message(raw, message_id):
             except (LookupError, UnicodeError):
                 body = payload.decode("utf-8", errors="replace")
         if part.get_content_type() == "text/html":
-            parser = HTMLText()
+            parser = HTMLText(links)
             parser.feed(body)
             parser.close()
             body = parser.text()
+        else:
+            body = links.text(body)
     return {
         "id": message_id,
         **{header: ", ".join(str(value) for value in message.get_all(header, []))
            for header in ("subject", "from", "to", "date")},
-        "body": body.strip(),
+        "body": body.strip(), "links": links.links,
     }
 
 
 DEMO_MESSAGES = [
     {"id": "demo-1", "subject": "Welcome to Jitsmail", "from": "Alex <alex@example.test>",
      "to": "You <you@example.test>", "date": "2026-01-15T10:30:00+00:00", "unread": True,
-     "body": "Welcome!\n\nThis is demo mail. No account or network was accessed.\n\nAlex"},
+     "body": "Welcome!\n\nThis is demo mail. No account or network was accessed.\n\nTry the link list with o: https://example.com/welcome?source=jitsmail-demo\n\nAlex"},
     {"id": "demo-2", "subject": "Lunch tomorrow?", "from": "Sam <sam@example.test>",
      "to": "You <you@example.test>", "date": "2026-01-14T14:00:00+00:00", "unread": False,
      "body": "Hi,\n\nWould noon work for lunch tomorrow?\n\nSam"},
@@ -179,7 +290,9 @@ def demo(args):
         if message["id"] == args.id:
             if args.command == "mark":
                 return {"id": args.id, "seen": args.seen}
-            return {key: value for key, value in message.items() if key != "unread"}
+            links = MessageLinks()
+            return {**{key: value for key, value in message.items() if key != "unread"},
+                    "body": links.text(message["body"]), "links": links.links}
     raise HelperError("Demo message not found")
 
 

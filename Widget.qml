@@ -24,6 +24,28 @@ BarWidget {
     property string pane: "list"
     property string cursorId: ""
     property bool showHelp: false
+    property bool showLinks: false
+    property int linkIndex: 0
+    readonly property var messageLinks: mail.message && Array.isArray(mail.message.links) ? mail.message.links : []
+    readonly property var selectedLink: messageLinks[linkIndex] || null
+    property var openUrl: function(url) { return Qt.openUrlExternally(url) }
+
+    function toggleLinks() {
+        if (showHelp || !mail.message || busy) return
+        pane = "reader"
+        showLinks = !showLinks
+        if (showLinks) linkList.forceActiveFocus()
+        else messageText.forceActiveFocus()
+    }
+    function moveLink(delta) {
+        linkIndex = Math.max(0, Math.min(messageLinks.length - 1, linkIndex + delta))
+        if (linkIndex >= 0) linkList.positionViewAtIndex(linkIndex, ListView.Contain)
+    }
+    function openLink() {
+        if (showHelp || !showLinks || !selectedLink || busy) return
+        // Defense in depth: only explicit browser navigation, never shell/HTML.
+        if (/^https?:\/\/[^\s/]+(?:[/?#]|$)/i.test(selectedLink.url)) openUrl(selectedLink.url)
+    }
     readonly property int cursorIndex: mail.messages.findIndex(function(m) { return m.id === root.cursorId })
     readonly property string targetId: pane === "reader" ? mail.selectedId : cursorId
     readonly property var targetEnvelope: mail.messages.find(function(m) { return m.id === root.targetId }) || null
@@ -38,7 +60,11 @@ BarWidget {
         selectAccount(accounts[(index + delta + accounts.length) % accounts.length])
     }
     function close() { opened = false }
-    function focusList() { pane = "list"; inbox.forceActiveFocus() }
+    function focusList() { showLinks = false; pane = "list"; inbox.forceActiveFocus() }
+    function back() {
+        if (showLinks) { showLinks = false; messageText.forceActiveFocus() }
+        else focusList()
+    }
     function syncCursor() {
         if (cursorIndex < 0) cursorId = mail.messages.length ? mail.messages[0].id : ""
         Qt.callLater(function() {
@@ -57,15 +83,20 @@ BarWidget {
     }
     function navigate(delta) {
         if (showHelp) return
-        if (pane === "reader") scrollReader(delta * 42)
+        if (showLinks) moveLink(delta)
+        else if (pane === "reader") scrollReader(delta * 42)
         else moveCursor(delta)
     }
     function jump(last) {
-        if (pane === "reader") scrollReader(last ? 1000000000 : -1000000000)
+        if (showHelp) return
+        if (showLinks) moveLink(last ? messageLinks.length : -messageLinks.length)
+        else if (pane === "reader") scrollReader(last ? 1000000000 : -1000000000)
         else if (mail.messages.length) moveCursor(last ? mail.messages.length : -mail.messages.length)
     }
     function halfPage(delta) {
-        if (pane === "reader") scrollReader(delta * reader.availableHeight / 2)
+        if (showHelp) return
+        if (showLinks) moveLink(delta * 5)
+        else if (pane === "reader") scrollReader(delta * reader.availableHeight / 2)
         else moveCursor(delta * Math.max(1, Math.floor(inbox.height / 86 / 2)))
     }
     function openCurrent() {
@@ -85,7 +116,7 @@ BarWidget {
     }
     function handleEscape() {
         if (showHelp) showHelp = false
-        else if (pane === "reader") focusList()
+        else if (pane === "reader") back()
         else close()
     }
     onCurrentAccountChanged: { cursorId = ""; pane = "list" }
@@ -101,6 +132,7 @@ BarWidget {
     Connections {
         target: mail
         function onMessagesChanged() { root.syncCursor() }
+        function onMessageChanged() { root.showLinks = false; root.linkIndex = 0 }
         function onSelectedIdChanged() { if (!mail.selectedId) root.pane = "list" }
     }
     Timer {
@@ -135,7 +167,9 @@ BarWidget {
             Shortcut { sequences: ["J", "Down"]; enabled: root.opened; onActivated: root.navigate(1) }
             Shortcut { sequences: ["K", "Up"]; enabled: root.opened; onActivated: root.navigate(-1) }
             Shortcut { sequences: ["Return", "Enter", "L", "Right"]; enabled: root.opened && root.pane === "list"; onActivated: root.openCurrent() }
-            Shortcut { sequences: ["H", "Left"]; enabled: root.opened; onActivated: root.focusList() }
+            Shortcut { sequences: ["H", "Left"]; enabled: root.opened; onActivated: root.back() }
+            Shortcut { sequence: "O"; enabled: root.opened; onActivated: root.toggleLinks() }
+            Shortcut { sequences: ["Return", "Enter", "L", "Right"]; enabled: root.opened && root.showLinks; autoRepeat: false; onActivated: root.openLink() }
             Shortcut { sequence: "G, G"; enabled: root.opened; onActivated: root.jump(false) }
             Shortcut { sequence: "Shift+G"; enabled: root.opened; onActivated: root.jump(true) }
             Shortcut { sequence: "Ctrl+D"; enabled: root.opened; onActivated: root.halfPage(1) }
@@ -190,7 +224,7 @@ BarWidget {
                 Text {
                     Layout.fillWidth: true
                     visible: root.showHelp
-                    text: "LIST: j/k or ↓/↑ select · Enter/l/→ open · gg/G first/last\nREADER: j/k scroll · Ctrl+d/u half-page · gg/G top/bottom · h/← back\nTab switches panes · n/p next/previous page · [/] accounts\nm mark read · u mark unread · r refresh · ? help · q close\nEsc closes help, returns to list, then closes panel. Ctrl+C copies selected text."
+                    text: "LIST: j/k or ↓/↑ select · Enter/l/→ open · gg/G first/last\nREADER: j/k scroll · Ctrl+d/u half-page · gg/G top/bottom · h/← back\nLINKS: o shows destinations · j/k select · Enter opens in browser · h back\nTab switches panes · n/p next/previous page · [/] accounts\nm mark read · u mark unread · r refresh · ? help · q close\nEsc closes help, returns to list, then closes panel. Ctrl+C copies selected text."
                     color: Color.foreground
                     wrapMode: Text.Wrap
                     textFormat: Text.PlainText
@@ -276,17 +310,74 @@ BarWidget {
                         RowLayout {
                             Layout.fillWidth: true
                             Text { Layout.fillWidth: true; text: root.pane === "reader" ? "▸ Reader" : "Reader"; color: root.pane === "reader" ? Color.accent : Color.foreground }
+                            Button { text: "Links (o)"; enabled: !!mail.message && !root.busy; focusable: true; onClicked: root.toggleLinks() }
                             Button { text: "Read (m)"; enabled: !!root.targetEnvelope && root.targetEnvelope.unread && !root.busy; focusable: true; onClicked: root.markCurrent(true) }
                             Button { text: "Unread (u)"; enabled: !!root.targetEnvelope && !root.targetEnvelope.unread && !root.busy; focusable: true; onClicked: root.markCurrent(false) }
                         }
+                        ColumnLayout {
+                            visible: root.showLinks
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            Text { text: "Links · j/k select · Enter opens in browser · h back"; color: Color.foreground; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            ListView {
+                                id: linkList
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                clip: true
+                                spacing: 4
+                                model: root.messageLinks
+                                ScrollBar.vertical: ScrollBar {}
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    required property int index
+                                    width: linkList.width
+                                    height: 56
+                                    radius: 4
+                                    color: index === root.linkIndex ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.18) : "transparent"
+                                    border.width: index === root.linkIndex ? 1 : 0
+                                    border.color: Color.accent
+                                    Column {
+                                        anchors.fill: parent
+                                        anchors.margins: 7
+                                        Text { width: parent.width; text: "[" + (index + 1) + "] " + modelData.label; textFormat: Text.PlainText; color: Color.foreground; elide: Text.ElideRight }
+                                        Text { width: parent.width; text: modelData.url; textFormat: Text.PlainText; color: Color.foreground; opacity: 0.65; elide: Text.ElideMiddle }
+                                    }
+                                    MouseArea { anchors.fill: parent; onClicked: { root.linkIndex = index; linkList.forceActiveFocus() } }
+                                }
+                                Text { anchors.centerIn: parent; visible: !root.messageLinks.length; text: "No web links in this message."; color: Color.foreground }
+                            }
+                            Text { text: "Destination (may contain tracking):"; color: Color.foreground; visible: !!root.selectedLink }
+                            ScrollView {
+                                id: linkPreview
+                                contentWidth: availableWidth
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 100
+                                visible: !!root.selectedLink
+                                clip: true
+                                TextArea {
+                                    width: linkPreview.availableWidth
+                                    text: root.selectedLink ? root.selectedLink.url : ""
+                                    textFormat: TextEdit.PlainText
+                                    readOnly: true
+                                    selectByMouse: true
+                                    wrapMode: TextEdit.WrapAnywhere
+                                    color: Color.foreground
+                                    background: null
+                                }
+                            }
+                            Button { text: "Open in browser (Enter)"; enabled: !!root.selectedLink && !root.busy; focusable: true; onClicked: root.openLink() }
+                        }
                         ScrollView {
                             id: reader
+                            objectName: "messageReader"
+                            visible: !root.showLinks
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             clip: true
                             contentWidth: availableWidth
                             TextArea {
                                 id: messageText
+                                objectName: "messageBody"
                                 width: reader.availableWidth
                                 readOnly: true
                                 selectByMouse: true
@@ -306,7 +397,7 @@ BarWidget {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: mail.marking ? "Updating message status…" : "j/k navigate · Enter open · h back · n/p pages · m/u read/unread · ? help · q close"
+                    text: mail.marking ? "Updating message status…" : "o links · j/k navigate · Enter open · h back · n/p pages · m/u read/unread · ? help · q close"
                     color: Color.foreground
                     opacity: 0.65
                     font.pixelSize: 11

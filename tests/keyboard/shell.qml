@@ -42,9 +42,9 @@ ShellRoot {
                 wait(200)
                 mail = find(widget, function(item) { return typeof item.readMessage === "function" })
                 check(mail !== null, "fixture service found")
-                area = find(widget, function(item) { return item instanceof TextArea })
+                area = find(widget, function(item) { return item.objectName === "messageBody" })
                 check(area !== null, "actual message TextArea found")
-                scroll = find(widget, function(item) { return item instanceof ScrollView })
+                scroll = find(widget, function(item) { return item.objectName === "messageReader" })
                 check(scroll !== null, "actual reader ScrollView found")
                 equal(widget.currentAccount, "alpha", "invalid configured preference falls back to allowlist")
                 equal(mail.fixtures.length, 63)
@@ -157,6 +157,32 @@ ShellRoot {
                 equal(mail.calls.length, count, "busy guards also work from reader focus")
                 mail.marking = false
             }
+            function test_links() {
+                var openedUrls = []
+                widget.openUrl = function(url) { openedUrls.push(url) }
+                press(Qt.Key_Return)
+                mail.message = {subject: "Links", from: "Sender", to: "Recipient", date: "today", body: "Read [1] or [2]", links: [
+                    {label: "First", url: "https://example.test/a?tracking=123"},
+                    {label: "Second", url: "https://other.test/b"},
+                    {label: "Unsafe fixture", url: "javascript:alert(1)"}
+                ]}
+                press(Qt.Key_H); equal(widget.pane, "list")
+                press(Qt.Key_O); check(widget.showLinks); equal(widget.pane, "reader", "links can open from the visible reader while list has focus")
+                equal(widget.linkIndex, 0)
+                equal(openedUrls.length, 0, "showing links never opens them")
+                press(Qt.Key_J); equal(widget.linkIndex, 1)
+                press(Qt.Key_Return); equal(openedUrls[0], "https://other.test/b")
+                press(Qt.Key_G, Qt.ShiftModifier); equal(widget.linkIndex, 2)
+                press(Qt.Key_Return); equal(openedUrls.length, 1, "unsafe schemes blocked")
+                press(Qt.Key_G); press(Qt.Key_G); equal(widget.linkIndex, 0)
+                press(Qt.Key_Return); equal(openedUrls[1], "https://example.test/a?tracking=123", "destination preserved exactly")
+                press(Qt.Key_H); check(!widget.showLinks); equal(widget.pane, "reader"); check(area.activeFocus)
+                press(Qt.Key_O); check(widget.showLinks)
+                press(Qt.Key_Escape); check(!widget.showLinks); equal(widget.pane, "reader")
+                press(Qt.Key_O); press(Qt.Key_BracketRight)
+                check(!widget.showLinks); equal(widget.linkIndex, 0); equal(widget.pane, "list")
+                equal(openedUrls.length, 2)
+            }
             function test_help_and_closed() {
                 press(Qt.Key_Question); check(widget.showHelp)
                 press(Qt.Key_J); equal(widget.cursorId, "alpha/1")
@@ -171,7 +197,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 7)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 8)
                     console.log("JITSMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

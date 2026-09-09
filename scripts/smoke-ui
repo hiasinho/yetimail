@@ -21,13 +21,23 @@ ln -s "$root" "$work/Jitsmail"
 cat > "$work/shell.qml" <<'QML'
 import QtQuick
 import Quickshell
+import qs.Commons
 import "Jitsmail"
 ShellRoot {
     FloatingWindow {
         visible: true
         implicitWidth: 1000
         implicitHeight: 700
-        Widget { id: widget; settings: ({demo: true}); anchors { top: parent.top; right: parent.right } Component.onCompleted: opened = true }
+        color: Color.background
+        Text {
+            anchors.centerIn: parent
+            text: "Jitsmail demo · Click the mail icon at the top right to open your inbox."
+            color: Color.foreground
+            textFormat: Text.PlainText
+        }
+        Widget { id: widget; settings: ({demo: true}); anchors { top: parent.top; right: parent.right } }
+        // The popup needs the anchor window's screen after Wayland maps it.
+        Timer { interval: 500; running: true; onTriggered: widget.opened = true }
     }
     MailService { id: probe; demo: true }
     Timer {

@@ -51,13 +51,123 @@ ShellRoot {
             }
             function init() {
                 widget.selectedAccount = "alpha"
-                mail.loading = false; mail.reading = false; mail.marking = false; mail.savingAttachment = false
+                mail.loading = false; mail.reading = false; mail.marking = false; mail.savingAttachment = false; mail.openingAttachment = false
+                mail.folderId = ""; mail.folderName = "Inbox"; mail.foldersLoading = false; mail.foldersError = ""
+                widget.showFolders = false
                 widget.cursorId = ""
                 mail.populate(); mail.calls = []
                 widget.opened = true
                 widget.showHelp = false
                 widget.focusList()
                 wait(50)
+            }
+            function test_folder_navigation() {
+                press(Qt.Key_Return); press(Qt.Key_N)
+                equal(mail.page, 2)
+                var folderButton = find(widget, function(item) { return item.objectName === "folderButton" })
+                check(folderButton !== null, "folder icon button found")
+                equal(folderButton.x, 0, "folder icon comes before account chips")
+                check(folderButton.width < 50 && folderButton.tooltipText.indexOf("Inbox") !== -1, "compact icon exposes current folder in tooltip")
+                mouseClick(folderButton, folderButton.width / 2, folderButton.height / 2); wait(30)
+                check(widget.showFolders, "folder icon opens dropdown")
+                var menu = find(widget, function(item) { return item.objectName === "folderMenu" })
+                var picker = find(widget, function(item) { return item.objectName === "folderPicker" })
+                check(menu.width >= 160 && menu.width <= 200, "dropdown has compact width")
+                equal(menu.height, mail.folders.length * 32 + 2, "short menu hugs discovered rows")
+                var anchor = menu.mapToItem(folderButton, 0, 0)
+                equal(anchor.x, 0, "menu left aligns with icon")
+                equal(anchor.y, folderButton.height + 2, "menu sits beneath icon")
+                equal(picker.count, mail.folders.length, "only discovered folders are listed")
+                check(find(picker, function(item) { return item.text === "Sent mail" }) !== null, "folder name shown without role suffix")
+                equal(widget.folderIndex, 0)
+                var count = mail.calls.length
+                press(Qt.Key_M); press(Qt.Key_U); press(Qt.Key_N); press(Qt.Key_P)
+                press(Qt.Key_O); press(Qt.Key_V); press(Qt.Key_A); press(Qt.Key_S); press(Qt.Key_Tab)
+                equal(mail.calls.length, count, "picker blocks mailbox actions")
+                equal(mail.page, 2)
+                press(Qt.Key_J); equal(widget.folderIndex, 1)
+                press(Qt.Key_K); equal(widget.folderIndex, 0)
+                press(Qt.Key_G, Qt.ShiftModifier); equal(widget.folderIndex, 4)
+                press(Qt.Key_G); press(Qt.Key_G); equal(widget.folderIndex, 0)
+                press(Qt.Key_G, Qt.ShiftModifier); press(Qt.Key_L)
+                check(!widget.showFolders)
+                equal(mail.folderId, "Projects/2026"); equal(mail.folderName, "Projects / 2026")
+                equal(mail.page, 1); equal(mail.selectedId, ""); equal(widget.pane, "list")
+                equal(mail.calls[mail.calls.length - 1].operation, "folder", "l chooses, never reads")
+                var roles = [Qt.Key_I, Qt.Key_S, Qt.Key_A, Qt.Key_T]
+                var ids = ["INBOX", "Sent", "Archive", "Trash"]
+                for (var i = 0; i < roles.length; i++) {
+                    press(Qt.Key_G); press(roles[i]); equal(mail.folderId, ids[i])
+                }
+                press(Qt.Key_F); press(Qt.Key_H); check(!widget.showFolders)
+                press(Qt.Key_F); press(Qt.Key_Escape); check(!widget.showFolders); check(widget.opened)
+                press(Qt.Key_Question); check(widget.showHelp)
+                press(Qt.Key_F); check(widget.showFolders && !widget.showHelp)
+                press(Qt.Key_Question); check(widget.showHelp && !widget.showFolders)
+                count = mail.calls.length
+                press(Qt.Key_Return); press(Qt.Key_G); press(Qt.Key_S)
+                equal(mail.calls.length, count, "help blocks read and role shortcuts")
+                press(Qt.Key_Escape)
+                press(Qt.Key_Return)
+                mail.message = {body: "Links", links: [{label: "Example", url: "https://example.test/"}]}
+                var urls = []
+                widget.openUrl = function(url) { urls.push(url) }
+                press(Qt.Key_O); check(widget.showLinks)
+                press(Qt.Key_F); check(!widget.showLinks)
+                press(Qt.Key_J); press(Qt.Key_Return)
+                equal(urls.length, 0, "picker Enter never opens a link")
+                equal(mail.calls[mail.calls.length - 1].operation, "folder")
+                var flags = ["marking", "savingAttachment", "openingAttachment"]
+                for (i = 0; i < flags.length; i++) {
+                    mail[flags[i]] = true
+                    count = mail.calls.length
+                    var folder = mail.folderId
+                    press(Qt.Key_F); check(!widget.showFolders, flags[i] + " blocks picker")
+                    press(Qt.Key_G); press(Qt.Key_I); press(Qt.Key_BracketRight)
+                    widget.selectAccount("beta")
+                    equal(widget.currentAccount, "alpha"); equal(mail.folderId, folder)
+                    equal(mail.calls.length, count, flags[i] + " blocks switching")
+                    mail[flags[i]] = false
+                    press(Qt.Key_F)
+                    mail[flags[i]] = true
+                    count = mail.calls.length
+                    press(Qt.Key_Return); press(Qt.Key_R); press(Qt.Key_BracketRight)
+                    equal(mail.calls.length, count, "busy picker blocks choose/retry/account")
+                    check(widget.showFolders)
+                    mail[flags[i]] = false
+                    press(Qt.Key_Escape)
+                }
+                press(Qt.Key_F)
+                mail.foldersLoading = true
+                count = mail.calls.length
+                press(Qt.Key_Return); press(Qt.Key_R)
+                equal(mail.calls.length, count, "loading prevents choice and duplicate folder request")
+                mail.foldersLoading = false; mail.foldersError = "Offline folder failure"
+                press(Qt.Key_R); equal(mail.foldersError, "")
+                equal(mail.calls[mail.calls.length - 1].operation, "folders", "r retries folder discovery")
+                press(Qt.Key_BracketRight)
+                equal(widget.currentAccount, "beta"); equal(mail.folderId, ""); equal(mail.folderName, "Inbox")
+                check(!widget.showFolders, "account change clears picker")
+                var folders = mail.folders
+                mail.folders = folders.filter(function(folder) { return folder.role !== "archive" })
+                press(Qt.Key_G); press(Qt.Key_A)
+                check(mail.foldersError.indexOf("archive") !== -1, "unavailable role error preserved")
+                equal(mail.folderId, "")
+                var errors = find(widget, function(item) { return item.objectName === "mailErrors" })
+                check(errors.visible && errors.text.indexOf("archive") !== -1, "role error is visible in UI")
+                count = mail.calls.length
+                press(Qt.Key_E); equal(mail.calls.length, count, "e adds no archive mutation")
+                var manyFolders = folders.slice()
+                for (i = 0; i < 30; i++) manyFolders.push({id: "extra/" + i, name: "Extra " + i, role: ""})
+                mail.folders = manyFolders
+                press(Qt.Key_F)
+                check(menu.height <= 322 && picker.contentHeight > picker.height, "long dropdown is capped and scrollable")
+                press(Qt.Key_G, Qt.ShiftModifier)
+                equal(widget.folderIndex, manyFolders.length - 1)
+                check(picker.contentY > 0, "last folder scrolls into view")
+                press(Qt.Key_G); press(Qt.Key_G); equal(widget.folderIndex, 0)
+                mail.folders = folders
+                press(Qt.Key_Q); check(!widget.showFolders && !widget.opened)
             }
             function test_navigation() {
                 equal(mail.messages.length, 50)
@@ -302,7 +412,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 12)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 13)
                     console.log("JITSMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

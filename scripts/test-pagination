@@ -34,6 +34,8 @@ account=default id=none page=1 seen=none
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --account) account=$2; shift 2 ;;
+        --mailbox) shift 2 ;;
+        --mailbox=*) shift ;;
         --id) id=$2; shift 2 ;;
         --page) page=$2; shift 2 ;;
         --seen) seen=true; shift ;;
@@ -41,6 +43,11 @@ while [ "$#" -gt 0 ]; do
         *) printf 'BAD ARGUMENT\n' >> "$JITSMAIL_CALLS"; exit 98 ;;
     esac
 done
+# Folder discovery is orthogonal to the pagination assertions below.
+if [ "$operation" = folders ]; then
+    printf '{"folders":[{"id":"INBOX","name":"Inbox","role":"inbox"}]}\n'
+    exit 0
+fi
 printf '%s account=%s id=%s page=%s seen=%s\n' "$operation" "$account" "$id" "$page" "$seen" >> "$JITSMAIL_CALLS"
 /usr/bin/sleep 0.2
 case "$operation" in

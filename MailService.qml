@@ -7,6 +7,82 @@ Item {
     property string account: ""
     property string config: ""
     property bool demo: false
+    // Folder navigation API: lazy loadFolders(); folders are {id,name,role?}.
+    // selectFolder(id) / selectFolderRole(role) return true when accepted.
+    // An empty id is Himalaya's configured Inbox alias. Role shortcuts may
+    // defer until discovery finishes; unknown/ambiguous roles fail closed.
+    property var folders: []
+    property string folderId: ""
+    property string folderName: "Inbox"
+    property bool foldersLoading: false
+    property string foldersError: ""
+    property bool foldersLoaded: false
+    property int foldersGeneration: 0
+    property int foldersRequest: 0
+    property int discoveryGeneration: 0
+    property string pendingFolderRole: ""
+    property bool foldersReload: false
+
+    function loadFolders() {
+        if (!ready || !active) return
+        if (foldersLoading) {
+            if (foldersGeneration !== discoveryGeneration) foldersReload = true
+            return
+        }
+        foldersReload = false
+        foldersError = ""
+        foldersLoading = true
+        foldersGeneration = discoveryGeneration
+        foldersRequest++
+        foldersProcess.command = command("folders")
+        foldersProcess.running = true
+    }
+
+    function selectFolder(id) {
+        if (!ready || !active || marking || savingAttachment || openingAttachment || typeof id !== "string") return false
+        var folder = folders.find(function(f) { return f.id === id })
+        if (id && !folder) { foldersError = "Folder is not available."; return false }
+        pendingFolderRole = ""
+        foldersError = ""
+        if (id === folderId) return true
+        folderId = id
+        folderName = folder ? folder.name : "Inbox"
+        resetMessages()
+        return true
+    }
+
+    function retryPendingFolderRole() {
+        if (!pendingFolderRole || !foldersLoaded || !ready || !active
+            || marking || savingAttachment || openingAttachment) return
+        var role = pendingFolderRole
+        pendingFolderRole = ""
+        selectFolderRole(role)
+    }
+    // Discovery may finish while an operation has latched. Retry next turn,
+    // after exit handlers finish applying old-folder results or launching a viewer.
+    onMarkingChanged: if (!marking) Qt.callLater(retryPendingFolderRole)
+    onSavingAttachmentChanged: if (!savingAttachment) Qt.callLater(retryPendingFolderRole)
+    onOpeningAttachmentChanged: if (!openingAttachment) Qt.callLater(retryPendingFolderRole)
+
+    function selectFolderRole(role) {
+        if (!ready || !active || marking || savingAttachment || openingAttachment
+            || ["inbox", "sent", "archive", "trash"].indexOf(role) < 0) return false
+        if (!foldersLoaded) {
+            pendingFolderRole = role
+            loadFolders()
+            return true
+        }
+        var matches = folders.filter(function(f) { return f.role === role })
+        if (!matches.length) {
+            var names = {inbox: ["inbox"], sent: ["sent", "sent mail", "sent items", "sent messages"],
+                         archive: ["archive", "archives"], trash: ["trash", "deleted items", "deleted messages"]}
+            matches = folders.filter(function(f) { return !f.role && names[role].indexOf(f.name.toLowerCase()) >= 0 })
+        }
+        if (matches.length === 1) return selectFolder(matches[0].id)
+        if (!matches.length && role === "inbox") return selectFolder("")
+        foldersError = matches.length ? "More than one " + role + " folder is available. Choose a folder." : "No known " + role + " folder is available."
+        return false
+    }
     property var messages: []
     property var message: null
     property string selectedId: ""
@@ -99,10 +175,23 @@ Item {
         if (account) args.push("--account", account)
         if (config) args.push("--config", config)
         if (demo) args.push("--demo")
+        if (operation !== "folders" && folderId) args.push("--mailbox=" + folderId)
         return args
     }
 
     function reset() {
+        discoveryGeneration++
+        folders = []
+        foldersLoaded = false
+        foldersError = ""
+        foldersReload = false
+        pendingFolderRole = ""
+        folderId = ""
+        folderName = "Inbox"
+        resetMessages()
+    }
+
+    function resetMessages() {
         generation++
         messages = []
         message = null
@@ -278,6 +367,41 @@ Item {
     onConfigChanged: reset()
     onDemoChanged: reset()
 
+    Process {
+        id: foldersProcess
+        stdout: StdioCollector { id: foldersOutput; waitForEnd: true }
+        stderr: StdioCollector { waitForEnd: true }
+        onRunningChanged: {
+            if (running) return
+            var request = root.foldersRequest
+            Qt.callLater(function() {
+                if (request !== root.foldersRequest || !root.foldersLoading || foldersProcess.running) return
+                root.foldersLoading = false
+                if (root.foldersGeneration !== root.discoveryGeneration) {
+                    if (root.pendingFolderRole || root.foldersReload) Qt.callLater(root.loadFolders)
+                } else {
+                    root.pendingFolderRole = ""
+                    root.foldersError = "Could not launch Python 3 to list folders."
+                }
+            })
+        }
+        onExited: function(code, status) {
+            root.foldersLoading = false
+            if (root.foldersGeneration !== root.discoveryGeneration) {
+                if (root.pendingFolderRole || root.foldersReload) Qt.callLater(root.loadFolders)
+                return
+            }
+            try {
+                var data = root.result(foldersOutput.text, code)
+                if (!Array.isArray(data.folders) || data.folders.some(function(f) {
+                    return !f || typeof f.id !== "string" || !f.id || typeof f.name !== "string" || !f.name
+                })) throw new Error("Invalid folder list from mail helper.")
+                root.folders = data.folders
+                root.foldersLoaded = true
+                root.retryPendingFolderRole()
+            } catch (e) { root.pendingFolderRole = ""; root.foldersError = e.message }
+        }
+    }
     Process {
         id: listProcess
         stdout: StdioCollector { id: listOutput; waitForEnd: true }

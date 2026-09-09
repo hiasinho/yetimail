@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# Offline MailService folder navigation/race checks. Never run the real helper.
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+quickshell=$(command -v quickshell)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/bin"
+ln -s "$root" "$work/Jitsmail"
+cat > "$work/bin/python3" <<'SH'
+#!/bin/sh
+shift
+operation=$1; shift
+mailbox=Inbox account=default id=none
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --mailbox=*) mailbox=${1#--mailbox=}; shift ;;
+        --account) account=$2; shift 2 ;;
+        --id) id=$2; shift 2 ;;
+        --page|--attachment) shift 2 ;;
+        --seen|--unseen) shift ;;
+        *) exit 98 ;;
+    esac
+done
+printf '%s|%s|%s\n' "$operation" "$account" "$mailbox" >> "$JITSMAIL_CALLS"
+/usr/bin/sleep 0.15
+case "$operation" in
+    folders) printf '{"folders":[{"id":"in","name":"Inbox"},{"id":"opaque","name":"Sent Items"},{"id":"localized","name":"Papierkorb","role":"trash"},{"id":"a1","name":"Archive"},{"id":"a2","name":"Archives"}]}\n' ;;
+    list) printf '{"messages":[{"id":"same","subject":"%s","unread":true}],"page":1,"hasNext":false}\n' "$mailbox" ;;
+    read) printf '{"id":"same","subject":"%s","body":"offline","attachments":[]}\n' "$mailbox" ;;
+    mark) /usr/bin/sleep 0.35; printf '{"id":"same","seen":true}\n' ;;
+    *) exit 98 ;;
+esac
+SH
+chmod +x "$work/bin/python3"
+cat > "$work/shell.qml" <<'QML'
+import QtQuick
+import Quickshell
+import "Jitsmail"
+ShellRoot {
+    id: test
+    property int phase: 0
+    property int ticks: 0
+    property bool failed: false
+    function check(ok, reason) {
+        if (!ok) { failed = true; console.error("FOLDERS_FAIL " + reason); Qt.quit() }
+        return ok
+    }
+    MailService {
+        id: mail
+        account: "offline"
+        onMessageChanged: {
+            if (message && message.subject !== (folderId || "Inbox")) test.check(false, "stale reader")
+        }
+        onMessagesChanged: {
+            if (messages.length && messages[0].subject !== (folderId || "Inbox")) test.check(false, "stale list")
+        }
+    }
+    Timer {
+        running: true; repeat: true; interval: 20
+        onTriggered: {
+            if (test.failed) return
+            if (++test.ticks > 300) { test.check(false, "timeout phase " + test.phase); return }
+            if (test.phase === 0 && mail.messages.length && !mail.loading) {
+                if (!test.check(mail.folderId === "" && mail.folderName === "Inbox" && !mail.foldersLoaded, "defaults/lazy discovery")) return
+                mail.readMessage("same")
+                mail.selectFolderRole("sent")
+                if (!test.check(mail.foldersLoading, "discovery latch")) return
+                test.phase++
+            } else if (test.phase === 1 && mail.folderId === "opaque" && !mail.loading && !mail.reading && mail.messages.length) {
+                if (!test.check(mail.folderName === "Sent Items" && mail.message === null && mail.selectedId === "" && mail.page === 1, "folder reset")) return
+                if (!test.check(!mail.selectFolderRole("archive") && !!mail.foldersError && mail.folderId === "opaque", "ambiguous role")) return
+                if (!test.check(!mail.selectFolder("unknown"), "unknown folder")) return
+                mail.readMessage("same")
+                // Invalidate after Process starts, not merely before launch.
+                test.phase++
+            } else if (test.phase === 2) {
+                if (!test.check(mail.selectFolderRole("trash") && mail.folderId === "localized", "explicit role")) return
+                test.phase++
+            } else if (test.phase === 3 && !mail.loading && !mail.reading && mail.messages.length) {
+                mail.setRead("same", true)
+                if (!test.check(mail.marking && !mail.selectFolder("opaque"), "mutation guard")) return
+                test.phase++
+            } else if (test.phase === 4 && !mail.marking) {
+                mail.savingAttachment = true
+                if (!test.check(!mail.selectFolder("opaque"), "save guard")) return
+                mail.savingAttachment = false
+                mail.openingAttachment = true
+                if (!test.check(!mail.selectFolderRole("sent"), "open guard")) return
+                mail.openingAttachment = false
+                mail.readMessage("same")
+                test.phase++
+            } else if (test.phase === 5 && mail.message && !mail.reading) {
+                // A viewer may outlive its launch latch: generation must still invalidate it.
+                mail.attachmentGeneration = mail.generation
+                mail.attachmentReadRequest = mail.readRequest
+                mail.attachmentMessageId = "same"
+                if (!test.check(mail.attachmentCurrent(), "attachment context setup")) return
+                mail.selectFolder("opaque")
+                if (!test.check(!mail.attachmentCurrent(), "stale attachment context")) return
+                mail.account = "other-offline"
+                if (!test.check(mail.folderId === "" && mail.folderName === "Inbox" && !mail.folders.length && !mail.foldersLoaded, "account reset")) return
+                test.phase++
+            } else if (test.phase === 6 && mail.messages.length && !mail.loading) {
+                mail.loadFolders()
+                mail.account = "third-offline"
+                mail.loadFolders()
+                test.phase++
+            } else if (test.phase === 7 && mail.foldersLoaded && !mail.foldersLoading) {
+                mail.selectFolderRole("sent")
+                test.phase++
+            } else if (test.phase === 8 && mail.folderId === "opaque" && mail.messages.length && !mail.loading && !mail.foldersLoading) {
+                if (!test.check(mail.foldersLoaded && !mail.foldersError && !mail.listError && !mail.readError, "final errors")) return
+                mail.foldersLoaded = false
+                mail.selectFolderRole("trash")
+                mail.setRead("same", true)
+                if (!test.check(mail.marking, "deferred mark setup")) return
+                test.phase++
+            } else if (test.phase === 9 && !mail.foldersLoading) {
+                if (!test.check(mail.marking && mail.folderId === "opaque" && mail.pendingFolderRole === "trash", "shortcut lost during mark")) return
+                test.phase++
+            } else if (test.phase === 10 && mail.folderId === "localized" && !mail.loading && mail.messages.length) {
+                mail.foldersLoaded = false
+                mail.selectFolderRole("sent")
+                mail.savingAttachment = true
+                test.phase++
+            } else if (test.phase === 11 && !mail.foldersLoading) {
+                if (!test.check(mail.folderId === "localized" && mail.pendingFolderRole === "sent", "shortcut lost during save")) return
+                mail.savingAttachment = false
+                // Save exit may synchronously begin launching an external viewer.
+                mail.openingAttachment = true
+                test.phase++
+            } else if (test.phase === 12) {
+                if (!test.check(mail.folderId === "localized" && mail.pendingFolderRole === "sent", "shortcut bypassed opening latch")) return
+                mail.openingAttachment = false
+                test.phase++
+            } else if (test.phase === 13 && mail.folderId === "opaque" && !mail.loading && mail.messages.length) {
+                if (!test.check(mail.pendingFolderRole === "", "pending shortcut not consumed")) return
+                console.log("JITSMAIL_FOLDERS_OK")
+                Qt.quit()
+            }
+        }
+    }
+}
+QML
+export JITSMAIL_CALLS="$work/calls"
+QT_QPA_PLATFORM=offscreen PATH="$work/bin" /usr/bin/timeout --kill-after=2 10 "$quickshell" -p "$work" --no-color > "$work/output" 2>&1 || { cat "$work/output"; exit 1; }
+cat "$work/output"
+cat "$work/calls"
+grep -q JITSMAIL_FOLDERS_OK "$work/output"
+! grep -Eq 'FOLDERS_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration' "$work/output"
+grep -q 'mark|offline|localized' "$work/calls"
+grep -q 'read|offline|opaque' "$work/calls"

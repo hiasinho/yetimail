@@ -7,6 +7,31 @@ Item {
     property string config: ""
     property bool demo: false
     readonly property string accountLabel: account || "Fixture"
+    property string folderId: ""
+    property string folderName: "Inbox"
+    property bool foldersLoading: false
+    property string foldersError: ""
+    property var folders: [
+        {id: "INBOX", name: "Inbox", role: "inbox"},
+        {id: "Sent", name: "Sent mail", role: "sent"},
+        {id: "Archive", name: "Archive", role: "archive"},
+        {id: "Trash", name: "Trash", role: "trash"},
+        {id: "Projects/2026", name: "Projects / 2026", role: ""}
+    ]
+    function loadFolders() { record("folders"); foldersError = "" }
+    function selectFolder(id) {
+        record("folder", id)
+        folderId = id
+        var folder = folders.find(function(item) { return item.id === id })
+        folderName = folder ? folder.name : "Inbox"
+        populate()
+    }
+    function selectFolderRole(role) {
+        record("role", role)
+        var folder = folders.find(function(item) { return item.role === role })
+        if (folder) selectFolder(folder.id)
+        else foldersError = "Folder role unavailable: " + role
+    }
     property bool loading: false
     property bool reading: false
     property bool marking: false
@@ -74,6 +99,6 @@ Item {
         })
         messages = fixtures.slice((page - 1) * 50, page * 50)
     }
-    onAccountChanged: populate()
+    onAccountChanged: { folderId = ""; folderName = "Inbox"; foldersError = ""; populate() }
     Component.onCompleted: populate()
 }

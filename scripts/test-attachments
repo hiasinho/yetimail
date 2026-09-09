@@ -23,13 +23,15 @@ while [ "$#" -gt 0 ]; do
         --id) id=$2; shift 2 ;;
         --attachment) attachment=$2; shift 2 ;;
         --account) account=$2; shift 2 ;;
-        --page|--config) shift 2 ;;
+        --page|--config|--mailbox) shift 2 ;;
+        --mailbox=*) shift ;;
         --demo) shift ;;
         *) exit 98 ;;
     esac
 done
 /usr/bin/sleep 0.15
 case "$operation" in
+    folders) printf '{"folders":[{"id":"INBOX","name":"Inbox","role":"inbox"}]}\n' ;;
     list) printf '{"messages":[{"id":"shared","unread":true}]}\n' ;;
     read) printf '{"id":"%s","body":"fixture","attachments":[{"id":"fixture","openable":true},{"id":"blocked","openable":false},{"id":"fail","openable":true},{"id":"invalid","openable":true},{"id":"linger","openable":true},{"id":"missing","openable":true}]}\n' "$id" ;;
     save)

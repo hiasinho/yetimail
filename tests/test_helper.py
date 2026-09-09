@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import runpy
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -22,6 +23,63 @@ class HelperTest(unittest.TestCase):
         lines = output.getvalue().splitlines()
         self.assertEqual(len(lines), 1)
         return status, json.loads(lines[0])
+
+    def test_folders_normalize_ids_names_and_optional_roles(self):
+        mailboxes = [{"id": "opaque-1", "name": "Boîte envoyée", "total": 5},
+                     {"id": "INBOX", "name": "Inbox"},
+                     {"id": "opaque-2", "name": "Localized", "role": "trash"}]
+        with patch("subprocess.run", return_value=subprocess.CompletedProcess(
+                [], 0, json.dumps({"mailboxes": mailboxes}).encode(), b"")) as run:
+            status, result = self.invoke("folders", "--account", "work", "--config", "/tmp/offline")
+        self.assertEqual(status, 0)
+        self.assertEqual(result, {"folders": [
+            {"id": "opaque-1", "name": "Boîte envoyée"}, {"id": "INBOX", "name": "Inbox"},
+            {"id": "opaque-2", "name": "Localized", "role": "trash"}]})
+        self.assertEqual(run.call_args.args[0], ["himalaya", "--config=/tmp/offline",
+                         "--account=work", "--json", "mailbox", "list"])
+
+    def test_bad_folders_fail_closed(self):
+        for data in ([], {}, {"mailboxes": {}}, {"mailboxes": [None]},
+                     {"mailboxes": [{"id": "", "name": "Inbox"}]},
+                     {"mailboxes": [{"id": "x", "name": "bad\nname"}]},
+                     {"mailboxes": [{"id": "x", "name": "A"}, {"id": "x", "name": "B"}]}):
+            with self.subTest(data=data), patch("subprocess.run", return_value=
+                    subprocess.CompletedProcess([], 0, json.dumps(data).encode(), b"")):
+                self.assertEqual(self.invoke("folders"), (1, {"error": "Invalid mailbox response from Himalaya"}))
+
+    def test_every_message_operation_routes_literal_mailbox(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        config = Path(directory.name) / "config.toml"
+        config.write_text('[accounts.work]\ndefault = true\n')
+        raw = helper["DEMO_ATTACHMENT"]
+        attachment = helper["DEMO_MESSAGES"][0]["attachments"][0]["id"]
+        for mailbox in ("Sent Items", "opaque/日本", "--seen; dangerous"):
+            cases = [("list",), ("read", "--id", "42"),
+                     ("mark", "--id", "42", "--account", "work", "--seen"),
+                     ("save", "--id", "42", "--attachment", attachment)]
+            for args in cases:
+                response = b'{"envelopes":[]}' if args[0] == "list" else raw
+                with self.subTest(mailbox=mailbox, operation=args[0]), patch("subprocess.run", return_value=
+                        subprocess.CompletedProcess([], 0, response, b"")) as run, patch.dict(
+                            helper["main"].__globals__, save_attachment=lambda *args: {"path": "/tmp/offline"}):
+                    status, result = self.invoke(*args, "--mailbox=" + mailbox, "--config", str(config))
+                    self.assertEqual(status, 0, result)
+                    argv = run.call_args.args[0]
+                    self.assertIn("--mailbox=" + mailbox, argv)
+                    if args[0] != "list":
+                        self.assertLess(argv.index("--mailbox=" + mailbox), argv.index("--"))
+                    self.assertNotIn("--seen", argv)
+
+    def test_demo_folder_discovery_and_navigation_are_offline(self):
+        with patch("subprocess.run", side_effect=AssertionError("must remain offline")):
+            status, result = self.invoke("folders", "--demo")
+            self.assertEqual(status, 0)
+            self.assertEqual([f["role"] for f in result["folders"]], ["inbox", "sent", "archive", "trash"])
+            for folder in result["folders"]:
+                self.assertEqual(self.invoke("list", "--demo", "--mailbox", folder["id"])[0], 0)
+                self.assertEqual(self.invoke("read", "--demo", "--mailbox", folder["id"], "--id", "demo-1")[0], 0)
+            self.assertEqual(self.invoke("list", "--demo", "--mailbox", "missing")[0], 1)
 
     def test_list_schema_and_default_account(self):
         # Shape confirmed using Himalaya 2.1's offline json-schema command.

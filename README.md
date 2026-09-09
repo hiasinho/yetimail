@@ -3,7 +3,8 @@
 A keyboard-first Omarchy mail panel powered by **Himalaya 2.1**. Read and manage inbox status without leaving the desktop.
 
 - Mail bar widget and two-pane inbox/reader.
-- Inbox messages in pages of 50, newest first; mouse or Vim-like keyboard navigation.
+- Folder messages in pages of 50, newest first; mouse or Vim-like keyboard navigation.
+- Keyboard folder picker and Inbox / Sent / Archive / Trash shortcuts.
 - Optional account selector restricted to an explicit allowlist; only the selected account is queried.
 - Unread badge counts **only the current page**, not the whole mailbox.
 - Automatic refresh every 120 seconds, plus Refresh / Ctrl+R.
@@ -18,7 +19,7 @@ Inspired by [omarchy-mail](https://github.com/roymckenzie/omarchy-mail). This is
 ## Requirements
 
 - Current Omarchy with the Quickshell-based shell and third-party plugin support.
-- Python 3 (standard library only); `xdg-open` and a default viewer for opening attachments.
+- Python 3.11+ (standard library only); `xdg-open` and a default viewer for opening attachments.
 - Himalaya **2.1.x**, with an IMAP account configured and noninteractive authentication working. Older CLI versions use different commands/JSON and are not supported.
 
 Configure your account outside Jitsmail:
@@ -29,9 +30,9 @@ himalaya configure
 himalaya --account personal --json envelope list --page-size 5
 ```
 
-Use the default account or select an account through plugin settings. Jitsmail reads the account's default inbox alias. Keep passwords in your password manager/keyring, not plugin settings or this repository. Authentication must work without an interactive prompt; the helper has closed stdin and a 30-second timeout.
+Use the default account or select an account through plugin settings. Jitsmail starts at the account's default inbox alias; the folder picker discovers that account's selectable mailboxes. Keep passwords in your password manager/keyring, not plugin settings or this repository. Authentication must work without an interactive prompt; the helper has closed stdin and a 30-second timeout.
 
-Gmail/OAuth, compose/reply, folders, search, and offline sync are outside this milestone.
+Gmail/OAuth, compose/reply, moving/archiving/deleting messages, search, and offline sync are outside this milestone.
 
 ## Install the local checkout
 
@@ -72,6 +73,8 @@ All commands work inside the panel, including while the selectable message text 
 | `j` / `k`, `↓` / `↑` | Select next/previous message in list; scroll in reader |
 | `Enter`, `l`, `→` | Open the highlighted message and focus reader |
 | `h`, `←` | Return from links to reader, or reader to list |
+| `f` | Open/close folder picker; `j/k` select, `Enter/l` opens, `h/Esc` dismisses |
+| `gi` / `gs` / `ga` / `gt` | Go to Inbox / Sent / Archive / Trash |
 | `o` | Toggle the reader's link list |
 | `a` | Toggle selectable attachment details; `j/k` select an attachment |
 | `s` / `Enter` in attachments | Save / save and explicitly open the selected attachment |
@@ -93,6 +96,12 @@ Status changes target the highlighted row in list mode, or the open message in r
 
 Older/newer navigation preserves the current page on failure. A full page enables Older; an exact multiple of 50 can therefore have a final empty page. IMAP pages can shift as new mail arrives. Account switching returns to page 1.
 
+## Folders
+
+Press `f` or click the folder icon beside the account tabs to open the compact dropdown. The picker lists the folders Himalaya exposes for the current account, including Drafts, Junk, and custom folders when present. Use `j/k`, `gg/G`, and `Enter` to choose; `r` refreshes folder discovery while the picker is open. `gi`, `gs`, `ga`, and `gt` select known Inbox, Sent, Archive, and Trash folders. Himalaya 2.1's shared listing does not expose special-use roles, so role shortcuts currently match unambiguous conventional names among discovered folders. Localized names remain available in the picker. Missing special folders report an error rather than guessing an unknown destination.
+
+Changing folders resets to page 1 and clears the old reader; changing accounts returns to Inbox. All message reads, status changes, and attachment saves are scoped to the selected mailbox, even when two folders contain the same message ID. Before explicit-folder operations, the helper reads Himalaya's configuration to verify that a folder ID is not redirected by a mailbox alias. Conflicting aliases or configurations it cannot safely interpret are rejected rather than accessing a different folder; credentials are never logged. Folder navigation itself never moves, archives, deletes, or marks a message read. There is intentionally no `e` archive action yet.
+
 ## Reading links
 
 Long web URLs become compact references such as `[1]` in the message body. In the reader, press `o` for the link list, use `j/k` to select, inspect the destination preview, then press `Enter` to open it in your default browser. `h` or `Esc` returns to the body. Mouse clicks select a link; the Open button opens it.
@@ -107,7 +116,7 @@ In attachment mode, `s` or **Save** writes a copy to **`~/Downloads`**. `Enter` 
 
 Opening is deliberately conservative: only `.txt` (UTF-8 plain text), PDF, PNG, JPEG, and GIF with matching MIME and basic content checks are supported. Executables, scripts, desktop shortcuts, HTML/SVG, archives, attached emails, unknown types, and mismatches remain **save-only**. This is not malware detection or a sandbox: only open files you trust, keep viewers updated, and remember that external viewers may access the network. A failed opener leaves the saved copy in place. Each viewer has an independent launcher: once it starts, further saves and opens are available immediately. Viewers may stay open indefinitely; Jitsmail does not impose a viewer lifetime timeout. Late launcher errors are shown only for the same account, message, and attachment action.
 
-Account/config/message changes discard pending results and prevent a deferred open; closing the panel cancels a pending open too. An already-requested save can still finish on disk after navigation. Already-launched external viewers are not recalled. Demo saves produce a real synthetic `welcome.txt`, but demo opening is always suppressed.
+Account/config/folder/message changes discard pending results and prevent a deferred open; closing the panel cancels a pending open too. An already-requested save can still finish on disk after navigation. Already-launched external viewers are not recalled. Demo saves produce a real synthetic `welcome.txt`, but demo opening is always suppressed.
 
 Sizes are decoded payload sizes, not the encoded transfer size; unknown sizes are labeled explicitly. Named inline parts may be listed, but unnamed inline images are omitted. Attached emails are listed as attachments without exposing their nested attachments separately. Metadata comes from the already-fetched MIME message; inspection adds no server requests. A save refetches that same message through `message read --raw` without `--seen`, preserving the selected account/config and default inbox alias. Attachment IDs are Jitsmail-local ordinal/content hashes, **not** Himalaya's sparse MIME part IDs. Name, type, and payload must still match the inspected attachment or saving fails with a reload instruction. Attached emails are saved as RFC 5322 bytes; attached multipart containers are serialized as MIME.
 
@@ -118,6 +127,7 @@ python3 -m unittest discover -s tests -v
 scripts/smoke-ui
 scripts/test-lifecycle
 scripts/test-pagination
+scripts/test-folders
 scripts/test-keyboard
 scripts/test-attachments
 bin/jitsmail-helper list --demo
@@ -149,7 +159,7 @@ Neither command accesses real accounts.
 
 ## Design
 
-The reference-inspired layout uses a compact monospace sidebar, bordered account selectors, dense sender/subject rows, and a separate message header above the reader. The compact header shows the sender, recipients, and a short timestamp without redundant From/Date rows. HTML-to-text conversion preserves paragraph breaks while collapsing excessive blank space; it still never renders active HTML. Press `v` (or the header's ≡ button) to view and copy complete headers, including long subjects and recipient lists. Keyboard help opens as a floating shortcut card rather than shifting the inbox. Controls only expose implemented actions; compose, search, and folders are not placeholders.
+The reference-inspired layout uses a compact monospace sidebar, bordered account selectors, dense sender/subject rows, and a separate message header above the reader. The compact header shows the sender, recipients, and a short timestamp without redundant From/Date rows. HTML-to-text conversion preserves paragraph breaks while collapsing excessive blank space; it still never renders active HTML. Press `v` (or the header's ≡ button) to view and copy complete headers, including long subjects and recipient lists. Keyboard help opens as a floating shortcut card rather than shifting the inbox. Controls only expose implemented actions; compose and search are not placeholders.
 
 ```text
 Widget.qml → MailService.qml → bin/jitsmail-helper → Himalaya → IMAP

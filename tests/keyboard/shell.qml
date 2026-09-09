@@ -51,7 +51,7 @@ ShellRoot {
             }
             function init() {
                 widget.selectedAccount = "alpha"
-                mail.loading = false; mail.reading = false; mail.marking = false
+                mail.loading = false; mail.reading = false; mail.marking = false; mail.savingAttachment = false
                 widget.cursorId = ""
                 mail.populate(); mail.calls = []
                 widget.opened = true
@@ -157,8 +157,8 @@ ShellRoot {
                 widget.openUrl = function(url) { openedUrls.push(url) }
                 press(Qt.Key_Return)
                 var attachments = [
-                    {name: "reference.pdf", type: "application/pdf", size: 1536},
-                    {name: "empty.txt", type: "text/plain", size: 0},
+                    {id: "pdf", name: "reference.pdf", type: "application/pdf", size: 1536, openable: true},
+                    {id: "txt", name: "empty.txt", type: "text/plain", size: 0, openable: true},
                     {name: "unknown", type: "application/octet-stream", size: null},
                     {name: "long-name-".repeat(200) + ".pdf", type: "application/" + "long-type".repeat(100), size: 2097152}
                 ]
@@ -174,18 +174,31 @@ ShellRoot {
                 press(Qt.Key_H); press(Qt.Key_A)
                 check(widget.showAttachments); equal(widget.pane, "reader"); check(area.activeFocus)
                 check(area.readOnly && area.selectByMouse, "details selectable and read-only")
+                check(area.text.indexOf("1536 bytes") !== -1, "exact decoded size retained")
+                press(Qt.Key_G, Qt.ShiftModifier)
                 check(area.text.indexOf(attachments[3].name) !== -1, "full long filename retained")
                 check(area.text.indexOf(attachments[3].type) !== -1, "full media type retained")
-                check(area.text.indexOf("1536 bytes") !== -1, "exact decoded size retained")
-                check(area.text.indexOf("Unknown size") !== -1)
+                press(Qt.Key_D, Qt.ControlModifier); check(scroll.contentItem.contentY > 0, "long details scroll by keyboard")
+                press(Qt.Key_U, Qt.ControlModifier)
+                press(Qt.Key_K); check(area.text.indexOf("Unknown size") !== -1)
+                press(Qt.Key_G); press(Qt.Key_G)
                 area.selectAll(); equal(area.selectedText, area.text, "all metadata can be copied"); area.deselect(); area.cursorPosition = 0; wait(30)
                 press(Qt.Key_G); press(Qt.Key_G)
-                press(Qt.Key_J); check(scroll.contentItem.contentY > 0, "j scrolls details")
-                press(Qt.Key_K); equal(scroll.contentItem.contentY, 0)
-                press(Qt.Key_G, Qt.ShiftModifier); check(scroll.contentItem.contentY > 100)
-                press(Qt.Key_G); press(Qt.Key_G); equal(scroll.contentItem.contentY, 0)
-                press(Qt.Key_Return); equal(openedUrls.length, 0, "attachments never open externally")
+                equal(mail.calls.length, 1, "inspection never saves or opens")
+                press(Qt.Key_J); equal(widget.attachmentIndex, 1, "j selects attachment")
+                press(Qt.Key_S); equal(mail.calls[1].operation, "saveAttachment"); equal(mail.calls[1].id, "txt")
+                press(Qt.Key_Return); equal(mail.calls[2].operation, "openAttachment"); equal(mail.calls[2].id, "txt")
+                mail.savingAttachment = true
+                press(Qt.Key_S); press(Qt.Key_Return); equal(mail.calls.length, 3, "busy prevents duplicate actions")
+                mail.savingAttachment = false
+                press(Qt.Key_Question); press(Qt.Key_S); press(Qt.Key_Return); equal(mail.calls.length, 3, "help blocks actions")
+                press(Qt.Key_Escape)
+                press(Qt.Key_K); equal(widget.attachmentIndex, 0)
+                press(Qt.Key_G, Qt.ShiftModifier); equal(widget.attachmentIndex, 3)
+                press(Qt.Key_G); press(Qt.Key_G); equal(widget.attachmentIndex, 0)
+                equal(openedUrls.length, 0, "attachments never use URL opener")
                 press(Qt.Key_H); check(!widget.showAttachments); equal(area.text, "Body"); equal(widget.pane, "reader")
+                press(Qt.Key_S); press(Qt.Key_Return); equal(mail.calls.length, 3, "save/open keys scoped to attachments")
                 press(Qt.Key_A); press(Qt.Key_Escape); check(!widget.showAttachments); equal(widget.pane, "reader")
                 press(Qt.Key_A); press(Qt.Key_A); check(!widget.showAttachments)
                 press(Qt.Key_V); press(Qt.Key_A); check(!widget.showHeaders && widget.showAttachments)

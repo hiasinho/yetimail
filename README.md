@@ -8,7 +8,7 @@ A keyboard-first Omarchy mail panel powered by **Himalaya 2.1**. Read and manage
 - Unread badge counts **only the current page**, not the whole mailbox.
 - Automatic refresh every 120 seconds, plus Refresh / Ctrl+R.
 - Safe text-only message display with compact numbered web links and destination previews.
-- Attachment filenames, MIME types, and sizes, with keyboard-accessible details.
+- Keyboard-accessible attachment details, safe saving, and explicit opening of supported types.
 - Explicit mark-read / mark-unread actions. Opening a message does **not** mark it seen.
 - No sending, deleting, or remote images.
 - Demo mode requires no account and never invokes Himalaya.
@@ -18,7 +18,7 @@ Inspired by [omarchy-mail](https://github.com/roymckenzie/omarchy-mail). This is
 ## Requirements
 
 - Current Omarchy with the Quickshell-based shell and third-party plugin support.
-- Python 3 (standard library only).
+- Python 3 (standard library only); `xdg-open` and a default viewer for opening attachments.
 - Himalaya **2.1.x**, with an IMAP account configured and noninteractive authentication working. Older CLI versions use different commands/JSON and are not supported.
 
 Configure your account outside Jitsmail:
@@ -31,7 +31,7 @@ himalaya --account personal --json envelope list --page-size 5
 
 Use the default account or select an account through plugin settings. Jitsmail reads the account's default inbox alias. Keep passwords in your password manager/keyring, not plugin settings or this repository. Authentication must work without an interactive prompt; the helper has closed stdin and a 30-second timeout.
 
-Gmail/OAuth, compose/reply, folders, attachment saving/opening, search, and offline sync are outside this milestone.
+Gmail/OAuth, compose/reply, folders, search, and offline sync are outside this milestone.
 
 ## Install the local checkout
 
@@ -73,7 +73,8 @@ All commands work inside the panel, including while the selectable message text 
 | `Enter`, `l`, `→` | Open the highlighted message and focus reader |
 | `h`, `←` | Return from links to reader, or reader to list |
 | `o` | Toggle the reader's link list |
-| `a` | Toggle selectable attachment details |
+| `a` | Toggle selectable attachment details; `j/k` select an attachment |
+| `s` / `Enter` in attachments | Save / save and explicitly open the selected attachment |
 | `v` | Toggle full selectable message headers |
 | `j` / `k`, `Enter` in links | Select a link; explicitly open its destination in the browser |
 | `Tab`, `Shift+Tab` | Switch panes (opens highlighted message if needed) |
@@ -100,9 +101,15 @@ Only HTTP(S) destinations are supported. Links are never opened automatically; r
 
 ## Attachments
 
-Messages show compact attachment metadata beneath the header. Press `a` to inspect complete filenames, MIME types, and sizes in selectable text; use `j/k` to scroll and `h` or `Esc` to return. The compact summary stays bounded when a message has many attachments.
+Messages show compact attachment metadata beneath the header. Press `a` to inspect complete filenames, MIME types, and sizes in selectable text; use `j/k` to select, `gg`/`G` for first/last, `Ctrl+d/u` to scroll long details, and `h` or `Esc` to return. Click a filename chip or use the previous/next buttons to select with the mouse. The compact summary stays bounded when a message has many attachments.
 
-Sizes are decoded payload sizes, not the encoded transfer size; unknown sizes are labeled explicitly. Named inline parts may be listed, but unnamed inline images are omitted. Attached emails are listed as attachments without exposing their nested attachments separately. Metadata comes from the already-fetched MIME message; there are no extra server requests. This does not yet save, execute, preview, or open files.
+In attachment mode, `s` or **Save** writes a copy to **`~/Downloads`**. `Enter` or **Open** saves a new copy, then invokes `xdg-open` with an argument array. These keys have no attachment actions outside this mode. Nothing is opened by inspection, selection, message reading, or saving alone. Each save creates a unique filename (`name (1).ext`, etc.), never overwrites existing files or follows file symlinks, and gives the file private non-executable permissions (0600). Sender path components, controls, and overlong filenames are sanitized. Downloads must be a real directory owned by you, not writable by other users; symlinked Downloads directories are intentionally rejected. This version uses the literal `~/Downloads`, not Himalaya's or XDG's configured download directory.
+
+Opening is deliberately conservative: only `.txt` (UTF-8 plain text), PDF, PNG, JPEG, and GIF with matching MIME and basic content checks are supported. Executables, scripts, desktop shortcuts, HTML/SVG, archives, attached emails, unknown types, and mismatches remain **save-only**. This is not malware detection or a sandbox: only open files you trust, keep viewers updated, and remember that external viewers may access the network. A failed opener leaves the saved copy in place. Each viewer has an independent launcher: once it starts, further saves and opens are available immediately. Viewers may stay open indefinitely; Jitsmail does not impose a viewer lifetime timeout. Late launcher errors are shown only for the same account, message, and attachment action.
+
+Account/config/message changes discard pending results and prevent a deferred open; closing the panel cancels a pending open too. An already-requested save can still finish on disk after navigation. Already-launched external viewers are not recalled. Demo saves produce a real synthetic `welcome.txt`, but demo opening is always suppressed.
+
+Sizes are decoded payload sizes, not the encoded transfer size; unknown sizes are labeled explicitly. Named inline parts may be listed, but unnamed inline images are omitted. Attached emails are listed as attachments without exposing their nested attachments separately. Metadata comes from the already-fetched MIME message; inspection adds no server requests. A save refetches that same message through `message read --raw` without `--seen`, preserving the selected account/config and default inbox alias. Attachment IDs are Jitsmail-local ordinal/content hashes, **not** Himalaya's sparse MIME part IDs. Name, type, and payload must still match the inspected attachment or saving fails with a reload instruction. Attached emails are saved as RFC 5322 bytes; attached multipart containers are serialized as MIME.
 
 ## Develop and test
 
@@ -112,6 +119,7 @@ scripts/smoke-ui
 scripts/test-lifecycle
 scripts/test-pagination
 scripts/test-keyboard
+scripts/test-attachments
 bin/jitsmail-helper list --demo
 bin/jitsmail-helper read --demo --id demo-1
 ```
@@ -119,6 +127,8 @@ bin/jitsmail-helper read --demo --id demo-1
 The smoke test launches a temporary **offscreen** Quickshell with demo data, tests the QML → helper → inbox/read round trip, then exits. It does not install/enable anything or access your mail. Override `OMARCHY_SHELL_PATH` if Omarchy's shell is elsewhere. A guard executable prevents accidental Himalaya access even if demo mode regresses.
 
 The lifecycle tests use shell fixtures instead of Python/Himalaya to check delayed host settings, overlapping requests, stale-result rejection, and failed launches. They replace only the compositor popup container for offscreen operation. Missing-executable warnings are expected in these tests.
+
+Attachment tests cover safe extraction, private unique writes in temporary homes, traversal/symlink defenses, runnable-type restrictions, and service save/open guards with offline fixtures. No tests open real attachments or alter real mail flags.
 
 Pagination tests exercise the actual service with offline fixtures and demo data, including failed requests and stale account results. Keyboard tests send real Qt key events to the production widget, including navigation while its TextArea has focus; only the backend and compositor popup are replaced. Install Qt's QML `QtTest` module to run keyboard tests.
 
@@ -148,6 +158,6 @@ Widget.qml → MailService.qml → bin/jitsmail-helper → Himalaya → IMAP
 
 The adapter executes argument arrays, never shell command strings. Account credentials stay under Himalaya's control. The helper suppresses backend stderr in UI errors because it may contain private configuration details. For connection errors, troubleshoot with Himalaya directly in a private terminal.
 
-No mail is written to a Jitsmail cache. Fetched messages remain in memory while the widget is loaded; there is no offline sync. Email text is explicitly displayed as plain text, never executable HTML. Large messages still need to be fetched by Himalaya; this prototype does not yet enforce a download-size cap.
+No mail is written to a Jitsmail cache; only explicit attachment save/open actions write downloaded files. Fetched messages remain in memory while the widget is loaded; there is no offline sync. Email text is explicitly displayed as plain text, never executable HTML. Large messages still need to be fetched by Himalaya; this prototype does not yet enforce a download-size cap.
 
 Offline tests cover fixtures, JSON normalization, MIME parsing, safe command arguments, errors, and the QML integration. A live-server smoke test is still required with your configured account before treating this as a daily mail client.

@@ -27,6 +27,15 @@ BarWidget {
     property bool showLinks: false
     property bool showHeaders: false
     property bool showAttachments: false
+    property int attachmentIndex: 0
+    readonly property var selectedAttachment: messageAttachments[attachmentIndex] || null
+    function moveAttachment(delta) {
+        attachmentIndex = Math.max(0, Math.min(messageAttachments.length - 1, attachmentIndex + delta))
+    }
+    function attachmentAction(openAfter) {
+        if (!opened || showHelp || !showAttachments || !selectedAttachment || busy) return
+        mail.saveAttachment(selectedAttachment.id, openAfter)
+    }
     readonly property var messageAttachments: mail.message && Array.isArray(mail.message.attachments) ? mail.message.attachments : []
     function attachmentSize(size) {
         if (typeof size !== "number" || !isFinite(size) || size < 0) return "Unknown size"
@@ -120,7 +129,7 @@ BarWidget {
     readonly property string targetId: pane === "reader" ? mail.selectedId : cursorId
     readonly property var targetEnvelope: mail.messages.find(function(m) { return m.id === root.targetId }) || null
     readonly property var displayedEnvelope: mail.messages.find(function(m) { return m.id === mail.selectedId }) || null
-    readonly property bool busy: mail.loading || mail.reading || mail.marking
+    readonly property bool busy: mail.loading || mail.reading || mail.marking || mail.savingAttachment || mail.openingAttachment
 
     function selectAccount(name) {
         if (accounts.indexOf(name) !== -1 && !mail.marking) selectedAccount = name
@@ -155,13 +164,15 @@ BarWidget {
     }
     function navigate(delta) {
         if (showHelp) return
-        if (showLinks) moveLink(delta)
+        if (showAttachments) moveAttachment(delta)
+        else if (showLinks) moveLink(delta)
         else if (pane === "reader") scrollReader(delta * 42)
         else moveCursor(delta)
     }
     function jump(last) {
         if (showHelp) return
-        if (showLinks) moveLink(last ? messageLinks.length : -messageLinks.length)
+        if (showAttachments) moveAttachment(last ? messageAttachments.length : -messageAttachments.length)
+        else if (showLinks) moveLink(last ? messageLinks.length : -messageLinks.length)
         else if (pane === "reader") scrollReader(last ? 1000000000 : -1000000000)
         else if (mail.messages.length) moveCursor(last ? mail.messages.length : -mail.messages.length)
     }
@@ -194,7 +205,10 @@ BarWidget {
         else close()
     }
     onCurrentAccountChanged: { cursorId = ""; pane = "list"; showLinks = false; showHeaders = false; showAttachments = false }
-    onOpenedChanged: if (opened) { showHelp = false; Qt.callLater(focusList) }
+    onOpenedChanged: {
+        if (opened) { showHelp = false; Qt.callLater(focusList) }
+        else mail.cancelAttachmentOpen()
+    }
 
     MailService {
         id: mail
@@ -206,7 +220,7 @@ BarWidget {
     Connections {
         target: mail
         function onMessagesChanged() { root.syncCursor() }
-        function onMessageChanged() { root.showLinks = false; root.showHeaders = false; root.showAttachments = false; root.linkIndex = 0 }
+        function onMessageChanged() { root.showLinks = false; root.showHeaders = false; root.showAttachments = false; root.linkIndex = 0; root.attachmentIndex = 0 }
         function onSelectedIdChanged() { if (!mail.selectedId) root.pane = "list" }
     }
     Timer {
@@ -245,6 +259,8 @@ BarWidget {
             Shortcut { sequence: "O"; enabled: root.opened; onActivated: root.toggleLinks() }
             Shortcut { sequence: "V"; enabled: root.opened; onActivated: root.toggleHeaders() }
             Shortcut { sequence: "A"; enabled: root.opened; onActivated: root.toggleAttachments() }
+            Shortcut { sequence: "S"; autoRepeat: false; enabled: root.opened && root.showAttachments; onActivated: root.attachmentAction(false) }
+            Shortcut { sequences: ["Return", "Enter"]; autoRepeat: false; enabled: root.opened && root.showAttachments; onActivated: root.attachmentAction(true) }
             Shortcut { sequences: ["Return", "Enter", "L", "Right"]; enabled: root.opened && root.showLinks; autoRepeat: false; onActivated: root.openLink() }
             Shortcut { sequence: "G, G"; enabled: root.opened; onActivated: root.jump(false) }
             Shortcut { sequence: "Shift+G"; enabled: root.opened; onActivated: root.jump(true) }
@@ -422,6 +438,7 @@ BarWidget {
                             ScrollBar.horizontal: ScrollBar {}
                             delegate: Rectangle {
                                 required property var modelData
+                                required property int index
                                 width: Math.max(0, Math.min(240, attachmentChips.width))
                                 height: 26
                                 clip: true
@@ -434,6 +451,14 @@ BarWidget {
                                     MailLabel { text: "📎"; font.pixelSize: 11 }
                                     MailLabel { Layout.fillWidth: true; Layout.minimumWidth: 0; text: modelData.name || "Unnamed attachment"; elide: Text.ElideMiddle; font.pixelSize: 11 }
                                     MailLabel { text: root.attachmentSize(modelData.size); font.pixelSize: 10; opacity: 0.6 }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        if (root.busy) return
+                                        if (!root.showAttachments) root.toggleAttachments()
+                                        root.attachmentIndex = index
+                                    }
                                 }
                                 HoverHandler { id: attachmentHover }
                                 ToolTip {
@@ -502,6 +527,21 @@ BarWidget {
                             }
                             MailButton { text: "Open in browser (Enter)"; enabled: !!root.selectedLink && !root.busy; focusable: true; onClicked: root.openLink() }
                         }
+                        RowLayout {
+                            visible: root.showAttachments
+                            Layout.fillWidth: true
+                            MailButton { text: "‹"; enabled: root.attachmentIndex > 0; onClicked: root.moveAttachment(-1) }
+                            MailLabel { text: (root.selectedAttachment ? root.attachmentIndex + 1 : 0) + " / " + root.messageAttachments.length }
+                            MailButton { text: "›"; enabled: root.attachmentIndex + 1 < root.messageAttachments.length; onClicked: root.moveAttachment(1) }
+                            MailButton { objectName: "saveAttachment"; text: "Save (s)"; enabled: !!root.selectedAttachment && !root.busy; onClicked: root.attachmentAction(false) }
+                            MailButton { objectName: "openAttachment"; text: "Open (Enter)"; enabled: !!root.selectedAttachment && !!root.selectedAttachment.openable && !root.busy; onClicked: root.attachmentAction(true) }
+                        }
+                        MailLabel {
+                            visible: root.showAttachments && (mail.savingAttachment || mail.attachmentStatus !== "")
+                            Layout.fillWidth: true
+                            text: mail.savingAttachment ? "Saving attachment…" : mail.attachmentStatus
+                            wrapMode: Text.WrapAnywhere
+                        }
                         ScrollView {
                             id: reader
                             objectName: "messageReader"
@@ -526,10 +566,9 @@ BarWidget {
                                 padding: 0
                                 onActiveFocusChanged: if (activeFocus && mail.selectedId) root.pane = "reader"
                                 text: mail.reading ? "Loading message…" : mail.readError ? mail.readError : mail.message ?
-                                    root.showAttachments ? ("Attachments · j/k scroll · h / Esc back\nMetadata only · no opening or downloading\n\n" +
-                                        (root.messageAttachments.length ? root.messageAttachments.map(function(attachment, index) {
-                                            return "[" + (index + 1) + "]\n" + root.attachmentMetadata(attachment)
-                                        }).join("\n\n") : "No attachments in this message.")) :
+                                    root.showAttachments ? ("Attachments · j/k select · s save · Enter open · h / Esc back\nSaves a unique private file in ~/Downloads. Open also saves a copy.\n\n" +
+                                        (root.selectedAttachment ? "[" + (root.attachmentIndex + 1) + "]\n" + root.attachmentMetadata(root.selectedAttachment) +
+                                         "\n\n" + (root.selectedAttachment.openable ? "Open with the default application only if you trust this file." : "Save-only type: opening is blocked.") : "No attachments in this message.")) :
                                     (root.showHeaders ? "Subject: " + mail.message.subject + "\nFrom: " + mail.message.from + "\nTo: " + mail.message.to + "\nDate: " + mail.message.date + "\n\n" : "") + mail.message.body :
                                     "Select a message with j/k, then press Enter to read.\n\nOpening a message does not mark it as read. Use m / u to change its status."
                                 onTextChanged: { cursorPosition = 0; reader.contentItem.contentY = 0 }
@@ -579,7 +618,8 @@ BarWidget {
                                 ["[ / ]", "Switch account"],
                                 ["o", "Show / hide links"],
                                 ["v", "Full selectable headers"],
-                                ["a", "Attachment metadata"],
+                                ["a", "Attachments: j/k select"],
+                                ["s / Enter", "Save / open attachment (in a)"],
                                 ["m / u", "Mark read / unread"],
                                 ["r", "Refresh inbox"],
                                 ["Ctrl+c", "Copy selected text"],

@@ -18,21 +18,29 @@ export PATH="$work/bin:$PATH"
 ln -s "$omarchy_shell/Commons" "$work/Commons"
 ln -s "$omarchy_shell/Ui" "$work/Ui"
 ln -s "$root" "$work/Jitsmail"
-cat > "$work/shell.qml" <<'QML'
+window_type=FloatingWindow
+window_properties='implicitWidth: 1000; implicitHeight: 700'
+if [[ ${JITSMAIL_INTERACTIVE:-0} == 1 ]]; then
+    # A real bar-sized layer surface gives KeyboardPanel correct available
+    # height; a tiled FloatingWindow was being mistaken for a giant bar.
+    window_type=PanelWindow
+    window_properties='implicitWidth: 220; implicitHeight: 32; anchors { top: true; right: true } margins.top: 32; exclusionMode: ExclusionMode.Ignore'
+fi
+cat > "$work/shell.qml" <<QML
 import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
 import "Jitsmail"
 ShellRoot {
-    FloatingWindow {
+    $window_type {
         visible: true
-        implicitWidth: 1000
-        implicitHeight: 700
+        $window_properties
         color: Color.background
         Text {
-            anchors.centerIn: parent
-            text: "Jitsmail demo · Click the mail icon at the top right to open your inbox."
+            anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 8 }
+            text: "Jitsmail demo"
+            font.family: Style.font.family
             color: Color.foreground
             textFormat: Text.PlainText
         }

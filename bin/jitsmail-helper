@@ -10,6 +10,10 @@ from email import policy
 from email.parser import BytesParser
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from attachments import AttachmentError, metadata as attachment_metadata, save as save_attachment
 
 
 TIMEOUT = 30
@@ -249,25 +253,6 @@ def list_messages(args):
             "page": args.page, "hasNext": len(messages) >= PAGE_SIZE}
 
 
-def attachment_metadata(message):
-    """Describe MIME attachments without descending into attached messages/parts."""
-    attachments = []
-    pending = [message]
-    while pending:
-        part = pending.pop()
-        filename = part.get_filename()
-        if part.get_content_disposition() == "attachment" or filename is not None:
-            payload = part.get_payload(decode=True)
-            attachments.append({
-                "name": filename or "attachment",
-                "type": part.get_content_type(),
-                "size": len(payload) if payload is not None else None,
-            })
-        elif part.get_content_maintype() == "multipart":
-            pending.extend(reversed(list(part.iter_parts())))
-    return attachments
-
-
 def parse_message(raw, message_id):
     message = BytesParser(policy=policy.default).parsebytes(raw)
     part = message.get_body(preferencelist=("html", "plain"))
@@ -296,10 +281,13 @@ def parse_message(raw, message_id):
     }
 
 
+DEMO_ATTACHMENT = (b'Content-Type: text/plain\nContent-Disposition: attachment; filename="welcome.txt"\n\n'
+                   b'Welcome to Jitsmail! This is an offline demo attachment.\n')
+
 DEMO_MESSAGES = [
     {"id": "demo-1", "subject": "Welcome to Jitsmail", "from": "Alex <alex@example.test>",
      "to": "You <you@example.test>", "date": "2026-01-15T10:30:00+00:00", "unread": True,
-     "attachments": [{"name": "welcome.pdf", "type": "application/pdf", "size": 24576}],
+     "attachments": attachment_metadata(BytesParser(policy=policy.default).parsebytes(DEMO_ATTACHMENT)),
      "body": "Welcome!\n\nThis is demo mail. No account or network was accessed.\n\nTry the link list with o: https://example.com/welcome?source=jitsmail-demo\n\nAlex"},
     {"id": "demo-2", "subject": "Lunch tomorrow?", "from": "Sam <sam@example.test>",
      "to": "You <you@example.test>", "date": "2026-01-14T14:00:00+00:00", "unread": False,
@@ -345,21 +333,22 @@ def demo(args):
 
 def main(argv=None):
     parser = Parser(description=__doc__)
-    parser.add_argument("command", choices=("list", "read", "mark"))
+    parser.add_argument("command", choices=("list", "read", "mark", "save"))
     parser.add_argument("--account", help="Himalaya account name; omit for its default")
     parser.add_argument("--config", help="Himalaya configuration path")
-    parser.add_argument("--id", help="message ID (required for read and mark)")
+    parser.add_argument("--id", help="message ID (required for read, mark, and save)")
     parser.add_argument("--page", type=int, help="list page, starting at 1")
+    parser.add_argument("--attachment", help="content-bound attachment ID (save only)")
     flags = parser.add_mutually_exclusive_group()
     flags.add_argument("--seen", dest="seen", action="store_true", default=None)
     flags.add_argument("--unseen", dest="seen", action="store_false")
     parser.add_argument("--demo", action="store_true", help="use fixtures; never invoke Himalaya")
     try:
         args = parser.parse_args(argv)
-        if args.command in ("read", "mark") and not args.id:
+        if args.command in ("read", "mark", "save") and not args.id:
             raise HelperError(f"{args.command} requires --id")
         if args.command == "list" and args.id is not None:
-            raise HelperError("--id is only supported for read and mark")
+            raise HelperError("--id is only supported for read, mark, and save")
         if args.page is not None and (args.command != "list" or args.page < 1):
             raise HelperError("--page requires list and a positive integer")
         if args.command == "mark":
@@ -369,8 +358,17 @@ def main(argv=None):
                 raise HelperError("mark requires --seen or --unseen")
         elif args.seen is not None:
             raise HelperError("--seen and --unseen are only supported for mark")
+        if (args.command == "save") != (args.attachment is not None):
+            raise HelperError("save requires --attachment; it is not supported for other commands")
+        if args.attachment is not None and not re.fullmatch(r"[1-9][0-9]*-[0-9a-f]{64}", args.attachment):
+            raise HelperError("Invalid attachment ID")
         args.page = args.page or 1
-        if args.demo:
+        if args.command == "save":
+            if args.demo and args.id != "demo-1":
+                raise HelperError("Demo attachment not found")
+            raw = DEMO_ATTACHMENT if args.demo else run_himalaya(args, ["message", "read", "--raw", "--", args.id])
+            result = {"id": args.id, **save_attachment(BytesParser(policy=policy.default).parsebytes(raw), args.attachment)}
+        elif args.demo:
             result = demo(args)
         elif args.command == "list":
             result = list_messages(args)
@@ -382,7 +380,10 @@ def main(argv=None):
                 result = parse_message(raw, args.id)
             except (ValueError, RecursionError):
                 raise HelperError("Could not parse message from Himalaya") from None
-    except HelperError as error:
+    except (ValueError, RecursionError):
+        print(json.dumps({"error": "Could not parse message attachment"}))
+        return 1
+    except (HelperError, AttachmentError) as error:
         print(json.dumps({"error": str(error)}))
         return 1
     print(json.dumps(result, ensure_ascii=True))

@@ -13,6 +13,65 @@ Item {
     property string listError: ""
     property string readError: ""
     property string actionError: ""
+    property bool savingAttachment: false
+    property bool openingAttachment: false
+    property string attachmentStatus: ""
+    property int attachmentGeneration: 0
+    property int attachmentReadRequest: 0
+    property int attachmentRequest: 0
+    property string attachmentMessageId: ""
+    property string attachmentId: ""
+    property bool attachmentOpen: false
+    property int openerLaunch: 0
+    property var attachmentOpeners: []
+    // Injectable only for offline service tests. Each viewer owns its Process
+    // until exit; only starting it (not its lifetime) latches the UI.
+    property var launchAttachment: function(path) {
+        openingAttachment = true
+        var process = attachmentOpener.createObject(root, {
+            command: ["xdg-open", path],
+            launch: ++openerLaunch,
+            request: attachmentRequest,
+            contextGeneration: generation,
+            contextReadRequest: readRequest,
+            contextAccount: account,
+            contextMessageId: selectedId
+        })
+        if (!process) {
+            openingAttachment = false
+            actionError = "Saved, but could not launch xdg-open."
+            return
+        }
+        attachmentOpeners = attachmentOpeners.concat([process])
+        process.running = true
+    }
+
+    function cancelAttachmentOpen() { attachmentOpen = false }
+    function attachmentCurrent() {
+        return active && attachmentGeneration === generation && attachmentReadRequest === readRequest
+            && message && message.id === attachmentMessageId && selectedId === attachmentMessageId
+    }
+    function saveAttachment(id, openAfter) {
+        if (!ready || !active || loading || reading || marking || savingAttachment || openingAttachment
+            || !message || message.id !== selectedId || typeof id !== "string" || !id) return
+        var attachment = (Array.isArray(message.attachments) ? message.attachments : []).find(function(a) { return a.id === id })
+        if (!attachment) return
+        actionError = ""
+        attachmentStatus = ""
+        if (openAfter && !attachment.openable) {
+            actionError = "This attachment is save-only. Save it and inspect it manually."
+            return
+        }
+        attachmentGeneration = generation
+        attachmentReadRequest = readRequest
+        attachmentMessageId = selectedId
+        attachmentId = id
+        attachmentOpen = !!openAfter
+        savingAttachment = true
+        attachmentRequest++
+        attachmentProcess.command = command("save").concat(["--id", selectedId, "--attachment", id])
+        attachmentProcess.running = true
+    }
     property int page: 1
     property bool hasNext: false
     property bool marking: false
@@ -51,6 +110,8 @@ Item {
         listError = ""
         readError = ""
         actionError = ""
+        attachmentStatus = ""
+        cancelAttachmentOpen()
         page = 1
         hasNext = false
         demoSeen = ({})
@@ -111,6 +172,8 @@ Item {
     function readMessage(id) {
         if (!active || reading || marking || (loading && requestedPage !== page)) return
         selectedId = String(id)
+        attachmentStatus = ""
+        cancelAttachmentOpen()
         message = null
         readError = ""
         readGeneration = generation
@@ -128,6 +191,85 @@ Item {
             return data
         } catch (e) {
             throw new Error(text.trim() ? e.message : "Mail helper could not run. Check Python 3 and Himalaya 2.1 are installed.")
+        }
+    }
+
+    Process {
+        id: attachmentProcess
+        stdout: StdioCollector { id: attachmentOutput; waitForEnd: true }
+        stderr: StdioCollector { waitForEnd: true }
+        onRunningChanged: {
+            if (running) return
+            var request = root.attachmentRequest
+            Qt.callLater(function() {
+                if (request !== root.attachmentRequest || !root.savingAttachment || attachmentProcess.running) return
+                root.savingAttachment = false
+                if (root.attachmentCurrent()) root.actionError = "Could not launch Python 3 to save attachment."
+            })
+        }
+        onExited: function(code, status) {
+            root.savingAttachment = false
+            if (!root.attachmentCurrent()) return
+            try {
+                var data = root.result(attachmentOutput.text, code)
+                if (data.id !== root.attachmentMessageId || data.attachment !== root.attachmentId
+                    || typeof data.path !== "string" || data.path[0] !== "/" || /[\x00-\x1f]/.test(data.path)
+                    || typeof data.openable !== "boolean")
+                    throw new Error("Invalid attachment response from mail helper.")
+                root.attachmentStatus = "Saved: " + data.path
+                if (root.attachmentOpen) {
+                    if (!data.openable) throw new Error("Saved, but this attachment is save-only.")
+                    if (root.demo) root.attachmentStatus += " (demo: opening suppressed)"
+                    else root.launchAttachment(data.path)
+                }
+            } catch (e) { root.actionError = e.message }
+        }
+    }
+    Component {
+        id: attachmentOpener
+        Process {
+            id: opener
+            required property int launch
+            required property int request
+            required property int contextGeneration
+            required property int contextReadRequest
+            required property string contextAccount
+            required property string contextMessageId
+            property bool didStart: false
+            property bool finished: false
+            // Discard output without retaining viewer logs for its lifetime.
+            stdout: SplitParser { onRead: function(data) {} }
+            stderr: SplitParser { onRead: function(data) {} }
+            function current() {
+                return root.active && request === root.attachmentRequest
+                    && contextGeneration === root.generation && contextAccount === root.account
+                    && contextReadRequest === root.readRequest && contextMessageId === root.selectedId
+                    && root.message && root.message.id === contextMessageId
+            }
+            function releaseLatch() {
+                if (launch === root.openerLaunch) root.openingAttachment = false
+            }
+            function finish(error) {
+                if (finished) return
+                finished = true
+                releaseLatch()
+                if (error && current()) root.actionError = error
+                root.attachmentOpeners = root.attachmentOpeners.filter(function(item) { return item !== opener })
+                destroy()
+            }
+            onStarted: { didStart = true; releaseLatch() }
+            onRunningChanged: {
+                if (running || didStart || finished) return
+                Qt.callLater(function() {
+                    // FailedToStart has no exited signal. A normal exit is
+                    // handled separately, even if another viewer has started.
+                    if (!finished && !didStart && !running)
+                        finish("Saved, but could not launch xdg-open.")
+                })
+            }
+            onExited: function(code, status) {
+                finish(code !== 0 ? "Saved, but xdg-open could not open the file." : "")
+            }
         }
     }
 

@@ -10,6 +10,11 @@ Item {
     property bool loading: false
     property bool reading: false
     property bool marking: false
+    property bool savingAttachment: false
+    property bool openingAttachment: false
+    property string attachmentStatus: ""
+    function cancelAttachmentOpen() {}
+    function saveAttachment(id, openAfter) { record(openAfter ? "openAttachment" : "saveAttachment", id) }
     property string listError: ""
     property string readError: ""
     property string actionError: ""

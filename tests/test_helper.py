@@ -201,8 +201,8 @@ class HelperTest(unittest.TestCase):
                     self.assertEqual(message["links"], [{"label": "example.com", "url":
                         "https://example.com/welcome?source=jitsmail-demo"}])
                     self.assertIn("[1]", message["body"])
-                    self.assertEqual(message["attachments"], [
-                        {"name": "welcome.pdf", "type": "application/pdf", "size": 24576}])
+                    self.assertEqual(message["attachments"], helper["DEMO_MESSAGES"][0]["attachments"])
+                    self.assertTrue(message["attachments"][0]["openable"])
                 else:
                     self.assertEqual(message["links"], [])
                     self.assertEqual(message["attachments"], [])
@@ -310,7 +310,8 @@ Hidden attachment
             result = helper["parse_message"](raw, "1")
         self.assertEqual(result["body"], "Visible")
         self.assertEqual(result["links"], [])
-        self.assertEqual(result["attachments"], [
+        self.assertEqual(len({a["id"] for a in result["attachments"]}), 5)
+        self.assertEqual([{k: a[k] for k in ("name", "type", "size")} for a in result["attachments"]], [
             {"name": "report.pdf", "type": "application/pdf", "size": 4},
             {"name": "café.txt", "type": "text/plain", "size": 5},
             {"name": "日本.txt", "type": "application/octet-stream", "size": 1},
@@ -330,7 +331,8 @@ PDF
 --attached--
 '''
         result = helper["parse_message"](raw, "1")
-        self.assertEqual(result["attachments"], [
+        self.assertFalse(result["attachments"][0]["openable"])
+        self.assertEqual([{k: a[k] for k in ("name", "type", "size")} for a in result["attachments"]], [
             {"name": "bundle.mime", "type": "multipart/mixed", "size": None}])
 
     def test_html_is_inert_text(self):

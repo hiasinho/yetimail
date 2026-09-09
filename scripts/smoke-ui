@@ -46,6 +46,7 @@ ShellRoot {
         function open(): void { widget.opened = true }
         function readFirst(): void { widget.opened = true; widget.openCurrent() }
         function help(): void { widget.opened = true; widget.showHelp = !widget.showHelp }
+        function attachments(): void { widget.opened = true; widget.toggleAttachments() }
         function close(): void { widget.close() }
     }
     MailService { id: probe; demo: true }

@@ -152,6 +152,68 @@ ShellRoot {
                 check(!widget.showHeaders)
                 equal(area.text, "Body")
             }
+            function test_attachment_metadata() {
+                var openedUrls = []
+                widget.openUrl = function(url) { openedUrls.push(url) }
+                press(Qt.Key_Return)
+                var attachments = [
+                    {name: "reference.pdf", type: "application/pdf", size: 1536},
+                    {name: "empty.txt", type: "text/plain", size: 0},
+                    {name: "unknown", type: "application/octet-stream", size: null},
+                    {name: "long-name-".repeat(200) + ".pdf", type: "application/" + "long-type".repeat(100), size: 2097152}
+                ]
+                mail.message = {subject: "Attachments", from: "Sender", to: "Recipient", date: "today", body: "Body", attachments: attachments}
+                wait(30)
+                var chips = find(widget, function(item) { return item.objectName === "attachmentChips" })
+                check(chips.visible, "metadata chips visible")
+                check(chips.height <= 36, "chips have bounded height")
+                equal(widget.attachmentSize(0), "0 B")
+                equal(widget.attachmentSize(null), "Unknown size")
+                equal(widget.attachmentSize(1536), "1.5 KiB")
+                equal(widget.attachmentSize(2097152), "2.0 MiB")
+                press(Qt.Key_H); press(Qt.Key_A)
+                check(widget.showAttachments); equal(widget.pane, "reader"); check(area.activeFocus)
+                check(area.readOnly && area.selectByMouse, "details selectable and read-only")
+                check(area.text.indexOf(attachments[3].name) !== -1, "full long filename retained")
+                check(area.text.indexOf(attachments[3].type) !== -1, "full media type retained")
+                check(area.text.indexOf("1536 bytes") !== -1, "exact decoded size retained")
+                check(area.text.indexOf("Unknown size") !== -1)
+                area.selectAll(); equal(area.selectedText, area.text, "all metadata can be copied"); area.deselect(); area.cursorPosition = 0; wait(30)
+                press(Qt.Key_G); press(Qt.Key_G)
+                press(Qt.Key_J); check(scroll.contentItem.contentY > 0, "j scrolls details")
+                press(Qt.Key_K); equal(scroll.contentItem.contentY, 0)
+                press(Qt.Key_G, Qt.ShiftModifier); check(scroll.contentItem.contentY > 100)
+                press(Qt.Key_G); press(Qt.Key_G); equal(scroll.contentItem.contentY, 0)
+                press(Qt.Key_Return); equal(openedUrls.length, 0, "attachments never open externally")
+                press(Qt.Key_H); check(!widget.showAttachments); equal(area.text, "Body"); equal(widget.pane, "reader")
+                press(Qt.Key_A); press(Qt.Key_Escape); check(!widget.showAttachments); equal(widget.pane, "reader")
+                press(Qt.Key_A); press(Qt.Key_A); check(!widget.showAttachments)
+                press(Qt.Key_V); press(Qt.Key_A); check(!widget.showHeaders && widget.showAttachments)
+                press(Qt.Key_O); check(widget.showLinks && !widget.showAttachments && !widget.showHeaders)
+                press(Qt.Key_A); check(widget.showAttachments && !widget.showLinks)
+                press(Qt.Key_V); check(widget.showHeaders && !widget.showAttachments)
+                press(Qt.Key_O); check(widget.showLinks && !widget.showHeaders)
+                press(Qt.Key_H)
+                press(Qt.Key_Question); press(Qt.Key_A); check(!widget.showAttachments, "help blocks attachment toggle")
+                press(Qt.Key_Escape)
+                mail.reading = true; press(Qt.Key_A); check(!widget.showAttachments, "busy guard"); mail.reading = false
+                press(Qt.Key_A); press(Qt.Key_BracketRight); check(!widget.showAttachments, "account change resets details")
+                equal(openedUrls.length, 0)
+            }
+            function test_attachment_empty_and_reset() {
+                press(Qt.Key_Return)
+                mail.message = {subject: "Legacy", from: "Sender", to: "Recipient", date: "today", body: "Legacy body"}
+                press(Qt.Key_A)
+                check(widget.showAttachments)
+                check(area.text.indexOf("No attachments in this message.") !== -1, "missing attachment field supported")
+                var chips = find(widget, function(item) { return item.objectName === "attachmentChips" })
+                check(!chips.visible)
+                mail.message = {subject: "Empty", from: "Sender", to: "Recipient", date: "today", body: "Empty body", attachments: []}
+                check(!widget.showAttachments, "message change resets details")
+                press(Qt.Key_A); check(area.text.indexOf("No attachments") !== -1)
+                press(Qt.Key_Tab); check(!widget.showAttachments); equal(widget.pane, "list")
+                equal(mail.calls.length, 1, "metadata view never reads or marks")
+            }
             function test_reader_toolbar_targets_displayed_message() {
                 var readButton = find(widget, function(item) { return item.objectName === "readerMarkRead" })
                 var unreadButton = find(widget, function(item) { return item.objectName === "readerMarkUnread" })
@@ -227,7 +289,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 10)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 12)
                     console.log("JITSMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

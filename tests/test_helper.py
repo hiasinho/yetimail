@@ -148,7 +148,8 @@ class HelperTest(unittest.TestCase):
                                          "--id=--seen; touch /tmp/no")
         self.assertEqual(status, 0)
         self.assertEqual(result, {"id": "--seen; touch /tmp/no", "subject": "Hello",
-                                  "from": "", "to": "", "date": "", "body": "Body", "links": []})
+                                  "from": "", "to": "", "date": "", "body": "Body", "links": [],
+                                  "attachments": []})
         self.assertEqual(run.call_args.args[0], [
             "himalaya", "--config=/tmp/a b.toml", "--account=work", "message", "read",
             "--raw", "--", "--seen; touch /tmp/no"])
@@ -194,13 +195,17 @@ class HelperTest(unittest.TestCase):
                 self.assertEqual(status, 0)
                 self.assertEqual(message["subject"], envelope["subject"])
                 self.assertTrue(message["body"])
-                self.assertEqual(set(message), {"id", "subject", "from", "to", "date", "body", "links"})
+                self.assertEqual(set(message), {
+                    "id", "subject", "from", "to", "date", "body", "links", "attachments"})
                 if envelope["id"] == "demo-1":
                     self.assertEqual(message["links"], [{"label": "example.com", "url":
                         "https://example.com/welcome?source=jitsmail-demo"}])
                     self.assertIn("[1]", message["body"])
+                    self.assertEqual(message["attachments"], [
+                        {"name": "welcome.pdf", "type": "application/pdf", "size": 24576}])
                 else:
                     self.assertEqual(message["links"], [])
+                    self.assertEqual(message["attachments"], [])
             status, listing = self.invoke("list", "--demo", "--account", "Custom")
             self.assertEqual(listing["account"], "Custom")
             status, error = self.invoke("read", "--demo", "--id", "missing")
@@ -240,6 +245,93 @@ Caf=E9 plain
         self.assertEqual(result["from"], "René <rene@example.test>")
         self.assertEqual(result["body"], "HTML Read more [1]")
         self.assertEqual(result["links"], [{"label": "Read more", "url": "https://example.test/read"}])
+
+    def test_multipart_attachment_metadata(self):
+        raw = b'''MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=outer
+
+--outer
+Content-Type: multipart/related; boundary=related
+
+--related
+Content-Type: text/html
+
+<p>Visible</p><img src="cid:pixel"><img src="https://tracker.test/pixel">
+--related
+Content-Type: image/png
+Content-Disposition: inline
+Content-ID: <pixel>
+Content-Transfer-Encoding: base64
+
+aGVsbG8=
+--related--
+--outer
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="report.pdf"
+Content-Transfer-Encoding: base64
+
+AAEC/w==
+--outer
+Content-Type: text/plain
+Content-Disposition: inline; filename*=utf-8''caf%C3%A9.txt
+Content-Transfer-Encoding: quoted-printable
+
+caf=C3=A9
+--outer
+Content-Type: application/octet-stream; name="=?utf-8?b?5pel5pysLnR4dA==?="
+Content-Transfer-Encoding: base64
+
+eA==
+--outer
+Content-Type: application/octet-stream
+Content-Disposition: attachment
+Content-Transfer-Encoding: base64
+
+--outer
+Content-Type: message/rfc822
+Content-Disposition: attachment
+
+Subject: Attached email
+Content-Type: multipart/mixed; boundary=nested
+
+--nested
+Content-Type: text/plain
+
+Hidden attached body https://hidden.test/
+--nested
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="nested.pdf"
+
+Hidden attachment
+--nested--
+--outer--
+'''
+        with patch("subprocess.run", side_effect=AssertionError("must remain offline")):
+            result = helper["parse_message"](raw, "1")
+        self.assertEqual(result["body"], "Visible")
+        self.assertEqual(result["links"], [])
+        self.assertEqual(result["attachments"], [
+            {"name": "report.pdf", "type": "application/pdf", "size": 4},
+            {"name": "café.txt", "type": "text/plain", "size": 5},
+            {"name": "日本.txt", "type": "application/octet-stream", "size": 1},
+            {"name": "attachment", "type": "application/octet-stream", "size": 0},
+            {"name": "attachment", "type": "message/rfc822", "size": None},
+        ])
+
+    def test_attached_multipart_is_not_double_counted(self):
+        raw = b'''Content-Type: multipart/mixed; boundary=attached
+Content-Disposition: attachment; filename="bundle.mime"
+
+--attached
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="nested.pdf"
+
+PDF
+--attached--
+'''
+        result = helper["parse_message"](raw, "1")
+        self.assertEqual(result["attachments"], [
+            {"name": "bundle.mime", "type": "multipart/mixed", "size": None}])
 
     def test_html_is_inert_text(self):
         raw = b'''Content-Type: text/html; charset=utf-8

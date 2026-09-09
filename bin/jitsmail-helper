@@ -249,6 +249,25 @@ def list_messages(args):
             "page": args.page, "hasNext": len(messages) >= PAGE_SIZE}
 
 
+def attachment_metadata(message):
+    """Describe MIME attachments without descending into attached messages/parts."""
+    attachments = []
+    pending = [message]
+    while pending:
+        part = pending.pop()
+        filename = part.get_filename()
+        if part.get_content_disposition() == "attachment" or filename is not None:
+            payload = part.get_payload(decode=True)
+            attachments.append({
+                "name": filename or "attachment",
+                "type": part.get_content_type(),
+                "size": len(payload) if payload is not None else None,
+            })
+        elif part.get_content_maintype() == "multipart":
+            pending.extend(reversed(list(part.iter_parts())))
+    return attachments
+
+
 def parse_message(raw, message_id):
     message = BytesParser(policy=policy.default).parsebytes(raw)
     part = message.get_body(preferencelist=("html", "plain"))
@@ -273,12 +292,14 @@ def parse_message(raw, message_id):
         **{header: ", ".join(str(value) for value in message.get_all(header, []))
            for header in ("subject", "from", "to", "date")},
         "body": body.strip(), "links": links.links,
+        "attachments": attachment_metadata(message),
     }
 
 
 DEMO_MESSAGES = [
     {"id": "demo-1", "subject": "Welcome to Jitsmail", "from": "Alex <alex@example.test>",
      "to": "You <you@example.test>", "date": "2026-01-15T10:30:00+00:00", "unread": True,
+     "attachments": [{"name": "welcome.pdf", "type": "application/pdf", "size": 24576}],
      "body": "Welcome!\n\nThis is demo mail. No account or network was accessed.\n\nTry the link list with o: https://example.com/welcome?source=jitsmail-demo\n\nAlex"},
     {"id": "demo-2", "subject": "Lunch tomorrow?", "from": "Sam <sam@example.test>",
      "to": "You <you@example.test>", "date": "2026-01-14T14:00:00+00:00", "unread": False,
@@ -317,7 +338,8 @@ def demo(args):
                 return {"id": args.id, "seen": args.seen}
             links = MessageLinks()
             return {**{key: value for key, value in message.items() if key != "unread"},
-                    "body": links.text(message["body"]), "links": links.links}
+                    "body": links.text(message["body"]), "links": links.links,
+                    "attachments": message.get("attachments", [])}
     raise HelperError("Demo message not found")
 
 

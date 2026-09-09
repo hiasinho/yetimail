@@ -26,6 +26,30 @@ BarWidget {
     property bool showHelp: false
     property bool showLinks: false
     property bool showHeaders: false
+    property bool showAttachments: false
+    readonly property var messageAttachments: mail.message && Array.isArray(mail.message.attachments) ? mail.message.attachments : []
+    function attachmentSize(size) {
+        if (typeof size !== "number" || !isFinite(size) || size < 0) return "Unknown size"
+        if (size < 1024) return size + " B"
+        var units = ["KiB", "MiB", "GiB", "TiB"]
+        var value = size / 1024
+        var unit = 0
+        while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++ }
+        return value.toFixed(1) + " " + units[unit]
+    }
+    function attachmentMetadata(attachment) {
+        var size = attachmentSize(attachment.size)
+        return "Name: " + (attachment.name || "Unnamed attachment") + "\nType: " + (attachment.type || "Unknown type") +
+            "\nSize: " + size + (typeof attachment.size === "number" && isFinite(attachment.size) && attachment.size >= 1024 ? " (" + attachment.size + " bytes)" : "")
+    }
+    function toggleAttachments() {
+        if (showHelp || !mail.message || busy) return
+        showAttachments = !showAttachments
+        showLinks = false
+        showHeaders = false
+        pane = "reader"
+        messageText.forceActiveFocus()
+    }
     property int linkIndex: 0
     readonly property var messageLinks: mail.message && Array.isArray(mail.message.links) ? mail.message.links : []
     readonly property var selectedLink: messageLinks[linkIndex] || null
@@ -70,6 +94,7 @@ BarWidget {
         if (showHelp || !mail.message || busy) return
         showHeaders = !showHeaders
         showLinks = false
+        showAttachments = false
         pane = "reader"
         messageText.forceActiveFocus()
     }
@@ -77,6 +102,8 @@ BarWidget {
         if (showHelp || !mail.message || busy) return
         pane = "reader"
         showLinks = !showLinks
+        showHeaders = false
+        showAttachments = false
         if (showLinks) linkList.forceActiveFocus()
         else messageText.forceActiveFocus()
     }
@@ -104,9 +131,10 @@ BarWidget {
         selectAccount(accounts[(index + delta + accounts.length) % accounts.length])
     }
     function close() { opened = false }
-    function focusList() { showLinks = false; pane = "list"; inbox.forceActiveFocus() }
+    function focusList() { showLinks = false; showAttachments = false; pane = "list"; inbox.forceActiveFocus() }
     function back() {
-        if (showLinks) { showLinks = false; messageText.forceActiveFocus() }
+        if (showAttachments) { showAttachments = false; messageText.forceActiveFocus() }
+        else if (showLinks) { showLinks = false; messageText.forceActiveFocus() }
         else focusList()
     }
     function syncCursor() {
@@ -165,7 +193,7 @@ BarWidget {
         else if (pane === "reader") back()
         else close()
     }
-    onCurrentAccountChanged: { cursorId = ""; pane = "list" }
+    onCurrentAccountChanged: { cursorId = ""; pane = "list"; showLinks = false; showHeaders = false; showAttachments = false }
     onOpenedChanged: if (opened) { showHelp = false; Qt.callLater(focusList) }
 
     MailService {
@@ -178,7 +206,7 @@ BarWidget {
     Connections {
         target: mail
         function onMessagesChanged() { root.syncCursor() }
-        function onMessageChanged() { root.showLinks = false; root.showHeaders = false; root.linkIndex = 0 }
+        function onMessageChanged() { root.showLinks = false; root.showHeaders = false; root.showAttachments = false; root.linkIndex = 0 }
         function onSelectedIdChanged() { if (!mail.selectedId) root.pane = "list" }
     }
     Timer {
@@ -216,6 +244,7 @@ BarWidget {
             Shortcut { sequences: ["H", "Left"]; enabled: root.opened; onActivated: root.back() }
             Shortcut { sequence: "O"; enabled: root.opened; onActivated: root.toggleLinks() }
             Shortcut { sequence: "V"; enabled: root.opened; onActivated: root.toggleHeaders() }
+            Shortcut { sequence: "A"; enabled: root.opened; onActivated: root.toggleAttachments() }
             Shortcut { sequences: ["Return", "Enter", "L", "Right"]; enabled: root.opened && root.showLinks; autoRepeat: false; onActivated: root.openLink() }
             Shortcut { sequence: "G, G"; enabled: root.opened; onActivated: root.jump(false) }
             Shortcut { sequence: "Shift+G"; enabled: root.opened; onActivated: root.jump(true) }
@@ -349,6 +378,7 @@ BarWidget {
                             spacing: 2
                             MailLabel { Layout.fillWidth: true; Layout.minimumWidth: 0; text: mail.message ? mail.message.subject || "(No subject)" : "Inbox"; font.pixelSize: 16; font.bold: true; elide: Text.ElideRight }
                             MailButton { text: "≡"; tooltipText: "Full selectable headers (v)"; selected: root.showHeaders; enabled: !!mail.message && !root.busy; onClicked: root.toggleHeaders() }
+                            MailButton { text: "📎"; tooltipText: "Attachment metadata (a)"; selected: root.showAttachments; enabled: !!mail.message && !root.busy; onClicked: root.toggleAttachments() }
                             MailButton { text: "↗"; tooltipText: "Show links (o)"; selected: root.showLinks; enabled: !!mail.message && !root.busy; onClicked: root.toggleLinks() }
                             MailButton { objectName: "readerMarkRead"; text: "✓"; tooltipText: "Mark this message read (m)"; enabled: !!mail.message && !!root.displayedEnvelope && root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, true) }
                             MailButton { objectName: "readerMarkUnread"; text: "●"; tooltipText: "Mark this message unread (u)"; enabled: !!mail.message && !!root.displayedEnvelope && !root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, false) }
@@ -376,6 +406,46 @@ BarWidget {
                                 MailLabel { Layout.maximumWidth: 125; elide: Text.ElideRight; text: mail.message ? root.headerDate(mail.message.date) : ""; opacity: 0.55; font.pixelSize: 11 }
                             }
                             MailLabel { Layout.fillWidth: true; text: mail.message ? "To    " + mail.message.to : ""; opacity: 0.55; font.pixelSize: 11; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight }
+                        }
+                        ListView {
+                            id: attachmentChips
+                            objectName: "attachmentChips"
+                            visible: !!mail.message && !mail.reading && !mail.readError && root.messageAttachments.length > 0
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            Layout.preferredHeight: 36
+                            Layout.maximumHeight: 36
+                            orientation: ListView.Horizontal
+                            spacing: 6
+                            clip: true
+                            model: root.messageAttachments
+                            ScrollBar.horizontal: ScrollBar {}
+                            delegate: Rectangle {
+                                required property var modelData
+                                width: Math.max(0, Math.min(240, attachmentChips.width))
+                                height: 26
+                                clip: true
+                                color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.07)
+                                border.color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.2)
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 5
+                                    spacing: 5
+                                    MailLabel { text: "📎"; font.pixelSize: 11 }
+                                    MailLabel { Layout.fillWidth: true; Layout.minimumWidth: 0; text: modelData.name || "Unnamed attachment"; elide: Text.ElideMiddle; font.pixelSize: 11 }
+                                    MailLabel { text: root.attachmentSize(modelData.size); font.pixelSize: 10; opacity: 0.6 }
+                                }
+                                HoverHandler { id: attachmentHover }
+                                ToolTip {
+                                    id: attachmentTooltip
+                                    visible: attachmentHover.hovered
+                                    delay: 500
+                                    text: root.attachmentMetadata(modelData)
+                                    font.family: Style.font.family
+                                    width: Math.min(400, content.width)
+                                    contentItem: MailLabel { text: attachmentTooltip.text; wrapMode: Text.WrapAnywhere }
+                                }
+                            }
                         }
                         ColumnLayout {
                             visible: root.showLinks
@@ -456,6 +526,10 @@ BarWidget {
                                 padding: 0
                                 onActiveFocusChanged: if (activeFocus && mail.selectedId) root.pane = "reader"
                                 text: mail.reading ? "Loading message…" : mail.readError ? mail.readError : mail.message ?
+                                    root.showAttachments ? ("Attachments · j/k scroll · h / Esc back\nMetadata only · no opening or downloading\n\n" +
+                                        (root.messageAttachments.length ? root.messageAttachments.map(function(attachment, index) {
+                                            return "[" + (index + 1) + "]\n" + root.attachmentMetadata(attachment)
+                                        }).join("\n\n") : "No attachments in this message.")) :
                                     (root.showHeaders ? "Subject: " + mail.message.subject + "\nFrom: " + mail.message.from + "\nTo: " + mail.message.to + "\nDate: " + mail.message.date + "\n\n" : "") + mail.message.body :
                                     "Select a message with j/k, then press Enter to read.\n\nOpening a message does not mark it as read. Use m / u to change its status."
                                 onTextChanged: { cursorPosition = 0; reader.contentItem.contentY = 0 }
@@ -505,6 +579,7 @@ BarWidget {
                                 ["[ / ]", "Switch account"],
                                 ["o", "Show / hide links"],
                                 ["v", "Full selectable headers"],
+                                ["a", "Attachment metadata"],
                                 ["m / u", "Mark read / unread"],
                                 ["r", "Refresh inbox"],
                                 ["Ctrl+c", "Copy selected text"],

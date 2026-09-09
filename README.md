@@ -8,6 +8,7 @@ A keyboard-first Omarchy mail panel powered by **Himalaya 2.1**. Read and manage
 - Unread badge counts **only the current page**, not the whole mailbox.
 - Automatic refresh every 120 seconds, plus Refresh / Ctrl+R.
 - Safe text-only message display with compact numbered web links and destination previews.
+- Attachment filenames, MIME types, and sizes, with keyboard-accessible details.
 - Explicit mark-read / mark-unread actions. Opening a message does **not** mark it seen.
 - No sending, deleting, or remote images.
 - Demo mode requires no account and never invokes Himalaya.
@@ -30,7 +31,7 @@ himalaya --account personal --json envelope list --page-size 5
 
 Use the default account or select an account through plugin settings. Jitsmail reads the account's default inbox alias. Keep passwords in your password manager/keyring, not plugin settings or this repository. Authentication must work without an interactive prompt; the helper has closed stdin and a 30-second timeout.
 
-Gmail/OAuth, compose/reply, folders, attachments, search, and offline sync are outside this milestone.
+Gmail/OAuth, compose/reply, folders, attachment saving/opening, search, and offline sync are outside this milestone.
 
 ## Install the local checkout
 
@@ -64,7 +65,7 @@ With an empty allowlist, the single-account behavior is unchanged. An empty `acc
 
 ## Keyboard navigation
 
-All commands work inside the panel, including while the selectable message text has focus. The highlighted row is the list cursor; the ▸ indicator shows which pane the navigation keys control.
+All commands work inside the panel, including while the selectable message text has focus. The highlighted row is the list cursor; opening a message switches navigation to the reader, and `h` returns to the list.
 
 | Key | Action |
 | --- | --- |
@@ -72,6 +73,8 @@ All commands work inside the panel, including while the selectable message text 
 | `Enter`, `l`, `→` | Open the highlighted message and focus reader |
 | `h`, `←` | Return from links to reader, or reader to list |
 | `o` | Toggle the reader's link list |
+| `a` | Toggle selectable attachment details |
+| `v` | Toggle full selectable message headers |
 | `j` / `k`, `Enter` in links | Select a link; explicitly open its destination in the browser |
 | `Tab`, `Shift+Tab` | Switch panes (opens highlighted message if needed) |
 | `gg` / `G` | First/last row on this page; top/bottom of reader |
@@ -94,6 +97,12 @@ Older/newer navigation preserves the current page on failure. A full page enable
 Long web URLs become compact references such as `[1]` in the message body. In the reader, press `o` for the link list, use `j/k` to select, inspect the destination preview, then press `Enter` to open it in your default browser. `h` or `Esc` returns to the body. Mouse clicks select a link; the Open button opens it.
 
 Only HTTP(S) destinations are supported. Links are never opened automatically; remote images and scripts remain blocked. Original destinations, including tracking parameters, are preserved—we do not follow redirects or silently rewrite URLs. The displayed sender-provided label is not proof of the destination's identity; check the URL before opening. Opening a link can trigger tracking in your browser.
+
+## Attachments
+
+Messages show compact attachment metadata beneath the header. Press `a` to inspect complete filenames, MIME types, and sizes in selectable text; use `j/k` to scroll and `h` or `Esc` to return. The compact summary stays bounded when a message has many attachments.
+
+Sizes are decoded payload sizes, not the encoded transfer size; unknown sizes are labeled explicitly. Named inline parts may be listed, but unnamed inline images are omitted. Attached emails are listed as attachments without exposing their nested attachments separately. Metadata comes from the already-fetched MIME message; there are no extra server requests. This does not yet save, execute, preview, or open files.
 
 ## Develop and test
 

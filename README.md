@@ -5,6 +5,7 @@ A keyboard-first Omarchy mail panel powered by **Himalaya 2.1**. Read and manage
 - Mail bar widget and two-pane inbox/reader.
 - Folder messages in pages of 50, newest first; mouse or Vim-like keyboard navigation.
 - Keyboard folder picker and Inbox / Sent / Archive / Trash shortcuts.
+- `Shift+M` moves one message to a chosen folder; lowercase `m` still marks read.
 - Optional account selector restricted to an explicit allowlist; only the selected account is queried.
 - Unread badge counts **only the current page**, not the whole mailbox.
 - Automatic refresh every 120 seconds, plus Refresh / Ctrl+R.
@@ -73,6 +74,7 @@ All commands work inside the panel, including while the selectable message text 
 | `j` / `k`, `↓` / `↑` | Select next/previous message in list; scroll in reader |
 | `Enter`, `l`, `→` | Open the highlighted message and focus reader |
 | `h`, `←` | Return from links to reader, or reader to list |
+| `Shift+M` | Move picker: `j/k` select destination, `Enter` moves, `h/Esc` cancels |
 | `f` | Open/close folder picker; `j/k` select, `Enter/l` opens, `h/Esc` dismisses |
 | `gi` / `gs` / `ga` / `gt` | Go to Inbox / Sent / Archive / Trash |
 | `o` | Toggle the reader's link list |
@@ -102,6 +104,8 @@ Press `f` or click the folder icon beside the account tabs to open the compact d
 
 Changing folders resets to page 1 and clears the old reader; changing accounts returns to Inbox. All message reads, status changes, and attachment saves are scoped to the selected mailbox, even when two folders contain the same message ID. Before explicit-folder operations, the helper reads Himalaya's configuration to verify that a folder ID is not redirected by a mailbox alias. Conflicting aliases or configurations it cannot safely interpret are rejected rather than accessing a different folder; credentials are never logged. Folder navigation itself never moves, archives, deletes, or marks a message read. There is intentionally no `e` archive action yet.
 
+Press `Shift+M` to move the highlighted message (or the displayed message in reader mode). The destination picker uses discovered folders; `j/k` selects, `Enter` moves, and `h/Esc` cancels without changes. Moves to the same folder are rejected, including when the configured Inbox alias resolves to that destination. Moving does not navigate to the destination or explicitly change read flags. On success the source row disappears and selection advances; on failure the message remains with an error. Both source and destination receive alias-routing checks. Moving to Trash is a folder move, not permanent deletion. There is no bulk move or undo yet.
+
 ## Reading links
 
 Long web URLs become compact references such as `[1]` in the message body. In the reader, press `o` for the link list, use `j/k` to select, inspect the destination preview, then press `Enter` to open it in your default browser. `h` or `Esc` returns to the body. Mouse clicks select a link; the Open button opens it.
@@ -128,6 +132,7 @@ scripts/smoke-ui
 scripts/test-lifecycle
 scripts/test-pagination
 scripts/test-folders
+scripts/test-moves
 scripts/test-keyboard
 scripts/test-attachments
 bin/jitsmail-helper list --demo

@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# Offline move integration checks. PATH contains only a fake python3, never mail.
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+quickshell=$(command -v quickshell)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/bin"
+ln -s "$root" "$work/Jitsmail"
+cat > "$work/bin/python3" <<'SH'
+#!/bin/sh
+shift
+operation=$1; shift
+mailbox=Inbox account=default id=none destination=none page=1
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --mailbox=*) mailbox=${1#--mailbox=}; shift ;;
+        --destination=*) destination=${1#--destination=}; shift ;;
+        --account) account=$2; shift 2 ;;
+        --id) id=$2; shift 2 ;;
+        --page) page=$2; shift 2 ;;
+        *) exit 98 ;;
+    esac
+done
+printf '%s|%s|%s|%s|%s|%s\n' "$operation" "$account" "$mailbox" "$id" "$destination" "$page" >> "$JITSMAIL_CALLS"
+/usr/bin/sleep 0.1
+case "$operation" in
+    folders) printf '%s\n' '{"folders":[{"id":"in","name":"Inbox","role":"inbox"},{"id":"Projects / Exact","name":"Inbox"},{"id":"fail","name":"Fail"},{"id":"bad","name":"Bad"},{"id":"launch","name":"Launch"}]}' ;;
+    list)
+        if [ "$page" = 2 ]; then
+            printf '{"messages":[{"id":"same","unread":true}],"page":2,"hasNext":false}\n'
+            exit 0
+        fi
+        if [ "$account" = offline ] && [ -f "$JITSMAIL_STATE/$mailbox-$page" ]; then first=fill; else first=same; fi
+        printf '{"messages":[{"id":"%s","subject":"%s","unread":true},{"id":"other","unread":false}],"page":%s,"hasNext":true}\n' "$first" "$account" "$page" ;;
+    read) printf '{"id":"%s","body":"offline","attachments":[{"id":"a","openable":true}]}\n' "$id" ;;
+    move)
+        /usr/bin/sleep 0.2
+        case "$destination" in
+            fail) printf '{"error":"Offline move failed"}\n'; exit 1 ;;
+            bad) printf '{"id":"wrong","destination":"bad"}\n' ;;
+            launch) /usr/bin/chmod -x "$0"; printf '{"error":"Launch failure armed"}\n'; exit 1 ;;
+            *) /usr/bin/touch "$JITSMAIL_STATE/$mailbox-1"; printf '{"id":"%s","destination":"%s"}\n' "$id" "$destination" ;;
+        esac ;;
+    *) exit 98 ;;
+esac
+SH
+chmod +x "$work/bin/python3"
+cat > "$work/shell.qml" <<'QML'
+import QtQuick
+import Quickshell
+import "Jitsmail"
+ShellRoot {
+    id: test
+    property int phase: 0
+    property int ticks: 0
+    property bool failed: false
+    property int requests: 0
+    function check(ok, reason) {
+        if (!ok) { failed = true; console.error("MOVES_FAIL " + reason); Qt.quit() }
+        return ok
+    }
+    function has(id) { return mail.messages.some(function(m) { return m.id === id }) }
+    MailService { id: mail; account: "offline" }
+    Timer {
+        running: true; repeat: true; interval: 20
+        onTriggered: {
+            if (test.failed) return
+            if (++test.ticks > 400) { test.check(false, "timeout phase " + test.phase); return }
+            if (test.phase === 0 && mail.messages.length && !mail.loading) {
+                if (!test.check(!mail.moveMessage("same", "Projects / Exact"), "undiscovered destination")) return
+                mail.loadFolders()
+                test.phase++
+            } else if (test.phase === 1 && mail.foldersLoaded) {
+                if (!test.check(!mail.moveMessage("absent", "Projects / Exact") && !mail.moveMessage("same", "unknown")
+                    && !mail.moveMessage("same", ""), "validation/default Inbox")) return
+                var guards = ["loading", "reading", "marking", "savingAttachment", "openingAttachment"]
+                for (var i = 0; i < guards.length; ++i) {
+                    mail[guards[i]] = true
+                    if (!test.check(!mail.moveMessage("same", "Projects / Exact"), guards[i] + " guard")) return
+                    mail[guards[i]] = false
+                }
+                mail.ready = false
+                if (!test.check(!mail.moveMessage("same", "Projects / Exact"), "ready guard")) return
+                mail.ready = true
+                mail.readMessage("other")
+                test.phase++
+            } else if (test.phase === 2 && mail.message && !mail.reading) {
+                test.requests = mail.listRequest
+                if (!test.check(mail.moveMessage("same", "Projects / Exact") && mail.moving, "accept/latch")) return
+                if (!test.check(!mail.moveMessage("same", "fail") && !mail.selectFolder("in") && !mail.selectFolderRole("inbox"), "move/navigation guard")) return
+                mail.refresh(); mail.nextPage(); mail.previousPage(); mail.setRead("other", true); mail.readMessage("same"); mail.saveAttachment("a", false)
+                if (!test.check(mail.listRequest === test.requests && !mail.marking && !mail.reading && !mail.savingAttachment && mail.selectedId === "other", "operation/timer guards")) return
+                test.phase++
+            } else if (test.phase === 3 && !mail.moving && !mail.loading && test.has("fill")) {
+                if (!test.check(!test.has("same") && mail.message.id === "other" && mail.selectedId === "other"
+                    && mail.messages[0].unread && !mail.messages[1].unread && !mail.actionError, "success/refill/reader/flags")) return
+                mail.readMessage("fill")
+                test.phase++
+            } else if (test.phase === 4 && mail.message && mail.message.id === "fill" && !mail.reading) {
+                if (!test.check(mail.moveMessage("fill", "fail"), "failure accepted")) return
+                test.phase++
+            } else if (test.phase === 5 && !mail.moving) {
+                if (!test.check(test.has("fill") && mail.message.id === "fill" && mail.actionError === "Offline move failed", "failure preserves source/reader")) return
+                mail.moveMessage("fill", "bad")
+                test.phase++
+            } else if (test.phase === 6 && !mail.moving) {
+                if (!test.check(test.has("fill") && mail.message.id === "fill" && mail.actionError.indexOf("Invalid move") >= 0, "bad response preserves source")) return
+                mail.moveMessage("fill", "Projects / Exact")
+                test.phase++
+            } else if (test.phase === 7 && !mail.moving && !mail.loading) {
+                if (!test.check(mail.message === null && mail.selectedId === "", "selected reader cleared")) return
+                mail.selectFolder("in")
+                test.phase++
+            } else if (test.phase === 8 && !mail.loading && test.has("same")) {
+                if (!test.check(!mail.moveMessage("same", "in"), "explicit same folder")) return
+                mail.moveMessage("same", "Projects / Exact")
+                test.phase++
+            } else if (test.phase === 9) {
+                // Direct account bindings cannot be blocked; invalidate their results.
+                mail.account = "other-offline"
+                test.phase++
+            } else if (test.phase === 10 && !mail.moving && !mail.loading && test.has("same")) {
+                if (!test.check(mail.messages[0].subject === "other-offline" && !mail.actionError, "stale success")) return
+                mail.loadFolders()
+                test.phase++
+            } else if (test.phase === 11 && mail.foldersLoaded) {
+                mail.moveMessage("same", "fail")
+                test.phase++
+            } else if (test.phase === 12) {
+                mail.account = "third-offline"
+                test.phase++
+            } else if (test.phase === 13 && !mail.moving && !mail.loading && test.has("same")) {
+                if (!test.check(!mail.actionError && mail.messages[0].subject === "third-offline", "stale failure")) return
+                mail.loadFolders()
+                test.phase++
+            } else if (test.phase === 14 && mail.foldersLoaded) {
+                mail.nextPage()
+                test.phase++
+            } else if (test.phase === 15 && !mail.loading && mail.page === 2) {
+                if (!test.check(mail.messages.length === 1 && mail.moveMessage("same", "Projects / Exact"), "last-page move")) return
+                test.phase++
+            } else if (test.phase === 16 && !mail.moving && !mail.loading) {
+                if (!test.check(mail.page === 1 && mail.messages.length === 2, "empty last page falls back")) return
+                mail.moveMessage("same", "launch")
+                test.phase++
+            } else if (test.phase === 17 && !mail.moving) {
+                if (!test.check(mail.actionError === "Launch failure armed", "arm launch failure")) return
+                mail.moveMessage("same", "Projects / Exact")
+                test.phase++
+            } else if (test.phase === 18 && !mail.moving) {
+                if (!test.check(test.has("same") && mail.actionError.indexOf("Could not launch Python") >= 0, "failed launch releases latch")) return
+                mail.active = false
+                if (!test.check(!mail.moveMessage("same", "Projects / Exact"), "inactive guard")) return
+                console.log("JITSMAIL_MOVES_OK")
+                Qt.quit()
+            }
+        }
+    }
+}
+QML
+export JITSMAIL_CALLS="$work/calls" JITSMAIL_STATE="$work"
+QT_QPA_PLATFORM=offscreen PATH="$work/bin" /usr/bin/timeout --kill-after=2 12 "$quickshell" -p "$work" --no-color > "$work/output" 2>&1 || { cat "$work/output"; exit 1; }
+cat "$work/output"
+cat "$work/calls"
+grep -q JITSMAIL_MOVES_OK "$work/output"
+! grep -Eq 'MOVES_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration' "$work/output"
+grep -Fq 'move|offline|Inbox|same|Projects / Exact|1' "$work/calls"
+grep -Fq 'move|offline|in|same|Projects / Exact|1' "$work/calls"
+! grep -Eq '^(mark|save)\|' "$work/calls"

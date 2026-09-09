@@ -39,7 +39,7 @@ Item {
     }
 
     function selectFolder(id) {
-        if (!ready || !active || marking || savingAttachment || openingAttachment || typeof id !== "string") return false
+        if (!ready || !active || moving || marking || savingAttachment || openingAttachment || typeof id !== "string") return false
         var folder = folders.find(function(f) { return f.id === id })
         if (id && !folder) { foldersError = "Folder is not available."; return false }
         pendingFolderRole = ""
@@ -53,19 +53,20 @@ Item {
 
     function retryPendingFolderRole() {
         if (!pendingFolderRole || !foldersLoaded || !ready || !active
-            || marking || savingAttachment || openingAttachment) return
+            || moving || marking || savingAttachment || openingAttachment) return
         var role = pendingFolderRole
         pendingFolderRole = ""
         selectFolderRole(role)
     }
     // Discovery may finish while an operation has latched. Retry next turn,
     // after exit handlers finish applying old-folder results or launching a viewer.
+    onMovingChanged: if (!moving) Qt.callLater(retryPendingFolderRole)
     onMarkingChanged: if (!marking) Qt.callLater(retryPendingFolderRole)
     onSavingAttachmentChanged: if (!savingAttachment) Qt.callLater(retryPendingFolderRole)
     onOpeningAttachmentChanged: if (!openingAttachment) Qt.callLater(retryPendingFolderRole)
 
     function selectFolderRole(role) {
-        if (!ready || !active || marking || savingAttachment || openingAttachment
+        if (!ready || !active || moving || marking || savingAttachment || openingAttachment
             || ["inbox", "sent", "archive", "trash"].indexOf(role) < 0) return false
         if (!foldersLoaded) {
             pendingFolderRole = role
@@ -128,7 +129,7 @@ Item {
             && message && message.id === attachmentMessageId && selectedId === attachmentMessageId
     }
     function saveAttachment(id, openAfter) {
-        if (!ready || !active || loading || reading || marking || savingAttachment || openingAttachment
+        if (!ready || !active || loading || reading || moving || marking || savingAttachment || openingAttachment
             || !message || message.id !== selectedId || typeof id !== "string" || !id) return
         var attachment = (Array.isArray(message.attachments) ? message.attachments : []).find(function(a) { return a.id === id })
         if (!attachment) return
@@ -151,6 +152,13 @@ Item {
     property int page: 1
     property bool hasNext: false
     property bool marking: false
+    property bool moving: false
+    property int moveGeneration: 0
+    property int moveRequest: 0
+    property string moveAccount: ""
+    property string moveFolder: ""
+    property string moveId: ""
+    property string moveDestination: ""
     property var demoSeen: ({})
     property string accountLabel: account || "Default account"
     // Quickshell's running flips only after launch, so latch requests ourselves.
@@ -220,7 +228,7 @@ Item {
     }
 
     function fetchPage(target) {
-        if (!ready || !active || loading || marking || (reading && target !== page)) return
+        if (!ready || !active || loading || moving || marking || (reading && target !== page)) return
         if (target !== page) {
             selectedId = ""
             message = null
@@ -237,7 +245,7 @@ Item {
     }
 
     function setRead(id, seen) {
-        if (!ready || !active || loading || reading || marking) return
+        if (!ready || !active || loading || reading || moving || marking) return
         actionError = ""
         if (!account.trim() && !demo) {
             actionError = "Select an explicit account before changing read status."
@@ -258,8 +266,48 @@ Item {
         markProcess.running = true
     }
 
+    function moveCurrent() {
+        return active && moveGeneration === generation && moveAccount === account && moveFolder === folderId
+    }
+
+    // Only discovered, exact destination IDs are accepted. The helper resolves
+    // the empty source's configured Inbox alias for same-folder validation.
+    function moveMessage(id, destination) {
+        if (!ready || !active || loading || reading || marking || moving || savingAttachment || openingAttachment) return false
+        actionError = ""
+        if (!account.trim() && !demo) {
+            actionError = "Select an explicit account before moving messages."
+            return false
+        }
+        if (typeof id !== "string" || !id || !messages.some(function(m) { return m.id === id })) {
+            actionError = "Message is not on the current page."
+            return false
+        }
+        var folder = folders.find(function(f) { return f.id === destination })
+        if (!foldersLoaded || typeof destination !== "string" || !destination || !folder) {
+            actionError = "Destination folder is not available."
+            return false
+        }
+        if (destination === folderId) {
+            actionError = "Message is already in that folder."
+            return false
+        }
+        moveGeneration = generation
+        moveAccount = account
+        moveFolder = folderId
+        moveId = id
+        moveDestination = destination
+        moving = true
+        moveRequest++
+        var args = command("move")
+        if (!account && demo) args.push("--account", "Demo")
+        moveProcess.command = args.concat(["--id", id, "--destination=" + destination])
+        moveProcess.running = true
+        return true
+    }
+
     function readMessage(id) {
-        if (!active || reading || marking || (loading && requestedPage !== page)) return
+        if (!active || reading || moving || marking || (loading && requestedPage !== page)) return
         selectedId = String(id)
         attachmentStatus = ""
         cancelAttachmentOpen()
@@ -455,6 +503,41 @@ Item {
             if (root.readGeneration !== root.generation) { Qt.callLater(root.refresh); return }
             try { root.message = root.result(readOutput.text, code) }
             catch (e) { root.readError = e.message }
+        }
+    }
+    Process {
+        id: moveProcess
+        stdout: StdioCollector { id: moveOutput; waitForEnd: true }
+        stderr: StdioCollector { waitForEnd: true }
+        onRunningChanged: {
+            if (running) return
+            var request = root.moveRequest
+            Qt.callLater(function() {
+                if (request !== root.moveRequest || !root.moving || moveProcess.running) return
+                root.moving = false
+                if (!root.moveCurrent()) Qt.callLater(root.refresh)
+                else root.actionError = "Could not launch Python 3 to move message."
+            })
+        }
+        onExited: function(code, status) {
+            root.moving = false
+            if (!root.moveCurrent()) { Qt.callLater(root.refresh); return }
+            try {
+                var data = root.result(moveOutput.text, code)
+                if (data.id !== root.moveId || data.destination !== root.moveDestination)
+                    throw new Error("Invalid move response from mail helper.")
+                root.messages = root.messages.filter(function(m) { return m.id !== root.moveId })
+                if (root.selectedId === root.moveId) {
+                    root.selectedId = ""
+                    root.message = null
+                    root.readError = ""
+                    root.attachmentStatus = ""
+                    root.cancelAttachmentOpen()
+                }
+                // Refill the current page; an emptied final page falls back.
+                var target = !root.messages.length && root.page > 1 ? root.page - 1 : root.page
+                Qt.callLater(function() { root.fetchPage(root.moveCurrent() ? target : root.page) })
+            } catch (e) { root.actionError = e.message }
         }
     }
     Process {

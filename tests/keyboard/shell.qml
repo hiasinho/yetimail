@@ -51,7 +51,7 @@ ShellRoot {
             }
             function init() {
                 widget.selectedAccount = "alpha"
-                mail.loading = false; mail.reading = false; mail.marking = false; mail.savingAttachment = false; mail.openingAttachment = false
+                mail.loading = false; mail.reading = false; mail.marking = false; mail.moving = false; mail.savingAttachment = false; mail.openingAttachment = false
                 mail.folderId = ""; mail.folderName = "Inbox"; mail.foldersLoading = false; mail.foldersError = ""
                 widget.showFolders = false
                 widget.cursorId = ""
@@ -60,6 +60,51 @@ ShellRoot {
                 widget.showHelp = false
                 widget.focusList()
                 wait(50)
+            }
+            function test_move_picker() {
+                mail.folderId = "INBOX"
+                widget.syncCursor()
+                press(Qt.Key_J)
+                press(Qt.Key_M, Qt.ShiftModifier)
+                check(widget.showFolders && widget.movePicker, "Shift+M opens move picker")
+                equal(widget.moveTargetId, "alpha/2")
+                equal(mail.calls.length, 1, "opening picker only discovers folders")
+                press(Qt.Key_Return)
+                equal(mail.calls.length, 1, "current folder cannot be a destination")
+                press(Qt.Key_M); press(Qt.Key_U)
+                equal(mail.calls.length, 1, "mark actions blocked in picker")
+                press(Qt.Key_J); press(Qt.Key_J); press(Qt.Key_Return)
+                check(!widget.showFolders)
+                equal(mail.calls[1].operation, "move")
+                equal(mail.calls[1].id, "alpha/2")
+                equal(mail.calls[1].seen, "Archive", "chosen destination")
+                equal(mail.folderId, "INBOX", "move does not navigate")
+                equal(widget.cursorId, "alpha/3", "next row selected")
+                press(Qt.Key_M)
+                equal(mail.calls[2].operation, "mark", "lowercase m still marks read")
+                press(Qt.Key_M, Qt.ShiftModifier); press(Qt.Key_H)
+                check(!widget.showFolders)
+                press(Qt.Key_M, Qt.ShiftModifier); press(Qt.Key_Escape)
+                check(!widget.showFolders && widget.opened)
+                equal(mail.calls.filter(function(call) { return call.operation === "move" }).length, 1, "cancel never moves")
+                press(Qt.Key_Return)
+                widget.cursorId = "alpha/4"
+                press(Qt.Key_M, Qt.ShiftModifier)
+                equal(widget.moveTargetId, "alpha/3", "reader targets displayed message not cursor")
+                press(Qt.Key_G, Qt.ShiftModifier); press(Qt.Key_Return)
+                equal(mail.calls[mail.calls.length - 1].id, "alpha/3")
+                equal(mail.calls[mail.calls.length - 1].seen, "Projects/2026")
+                press(Qt.Key_M, Qt.ShiftModifier)
+                check(widget.showFolders, "move picker open before config change")
+                mail.config = "new-offline-config"
+                wait(30)
+                check(!widget.showFolders, "configuration generation change dismisses stale move target")
+                for (var flag of ["loading", "reading", "marking", "moving", "savingAttachment", "openingAttachment"]) {
+                    mail[flag] = true
+                    press(Qt.Key_M, Qt.ShiftModifier)
+                    check(!widget.showFolders, flag + " prevents moving")
+                    mail[flag] = false
+                }
             }
             function test_folder_navigation() {
                 press(Qt.Key_Return); press(Qt.Key_N)
@@ -117,7 +162,7 @@ ShellRoot {
                 press(Qt.Key_J); press(Qt.Key_Return)
                 equal(urls.length, 0, "picker Enter never opens a link")
                 equal(mail.calls[mail.calls.length - 1].operation, "folder")
-                var flags = ["marking", "savingAttachment", "openingAttachment"]
+                var flags = ["moving", "marking", "savingAttachment", "openingAttachment"]
                 for (i = 0; i < flags.length; i++) {
                     mail[flags[i]] = true
                     count = mail.calls.length
@@ -412,7 +457,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 13)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 14)
                     console.log("JITSMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

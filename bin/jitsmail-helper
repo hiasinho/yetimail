@@ -343,6 +343,13 @@ def mark_message(args):
     return {"id": args.id, "seen": args.seen}
 
 
+def move_message(args):
+    source = ["--from=" + args.mailbox] if args.mailbox else []
+    run_himalaya(args, ["message", "move", *source, "--to=" + args.destination,
+                       "--", args.id])
+    return {"id": args.id, "destination": args.destination}
+
+
 DEMO_FOLDERS = [{"id": name, "name": name, "role": name.lower()}
                 for name in ("Inbox", "Sent", "Archive", "Trash")]
 
@@ -352,6 +359,11 @@ def demo(args):
         return {"folders": DEMO_FOLDERS}
     if args.mailbox and args.mailbox not in {folder["id"] for folder in DEMO_FOLDERS}:
         raise HelperError("Demo folder not found")
+    if args.command == "move":
+        if args.destination not in {folder["id"] for folder in DEMO_FOLDERS}:
+            raise HelperError("Demo destination folder not found")
+        if args.destination == (args.mailbox or "Inbox"):
+            raise HelperError("Source and destination folders must differ.")
     # Reused IDs intentionally exercise mailbox-scoped service state offline.
     if args.command == "list":
         messages = DEMO_MESSAGES[(args.page - 1) * PAGE_SIZE:args.page * PAGE_SIZE]
@@ -364,6 +376,8 @@ def demo(args):
         if message["id"] == args.id:
             if args.command == "mark":
                 return {"id": args.id, "seen": args.seen}
+            if args.command == "move":
+                return {"id": args.id, "destination": args.destination}
             links = MessageLinks()
             return {**{key: value for key, value in message.items() if key != "unread"},
                     "body": links.text(message["body"]), "links": links.links,
@@ -373,11 +387,12 @@ def demo(args):
 
 def main(argv=None):
     parser = Parser(description=__doc__)
-    parser.add_argument("command", choices=("folders", "list", "read", "mark", "save"))
+    parser.add_argument("command", choices=("folders", "list", "read", "mark", "save", "move"))
     parser.add_argument("--account", help="Himalaya account name; omit for its default")
     parser.add_argument("--config", help="Himalaya configuration path")
     parser.add_argument("--mailbox", default="", help="backend mailbox ID; omit for the inbox alias")
-    parser.add_argument("--id", help="message ID (required for read, mark, and save)")
+    parser.add_argument("--id", help="message ID (required for read, mark, save, and move)")
+    parser.add_argument("--destination", help="exact backend destination mailbox ID (move only)")
     parser.add_argument("--page", type=int, help="list page, starting at 1")
     parser.add_argument("--attachment", help="content-bound attachment ID (save only)")
     flags = parser.add_mutually_exclusive_group()
@@ -386,10 +401,17 @@ def main(argv=None):
     parser.add_argument("--demo", action="store_true", help="use fixtures; never invoke Himalaya")
     try:
         args = parser.parse_args(argv)
-        if args.command in ("read", "mark", "save") and not args.id:
+        if args.command in ("read", "mark", "save", "move") and not args.id:
             raise HelperError(f"{args.command} requires --id")
         if args.command in ("list", "folders") and args.id is not None:
-            raise HelperError("--id is only supported for read, mark, and save")
+            raise HelperError("--id is only supported for read, mark, save, and move")
+        if args.command == "move":
+            if not args.destination or not args.destination.strip():
+                raise HelperError("move requires a nonempty --destination")
+            if args.mailbox and args.mailbox == args.destination:
+                raise HelperError("Source and destination folders must differ.")
+        elif args.destination is not None:
+            raise HelperError("--destination is only supported for move")
         if args.page is not None and (args.command != "list" or args.page < 1):
             raise HelperError("--page requires list and a positive integer")
         if args.command == "mark":
@@ -421,6 +443,8 @@ def main(argv=None):
             result = list_messages(args)
         elif args.command == "mark":
             result = mark_message(args)
+        elif args.command == "move":
+            result = move_message(args)
         else:
             raw = run_himalaya(args, ["message", "read", "--raw", *mailbox_args(args), "--", args.id])
             try:

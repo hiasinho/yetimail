@@ -95,8 +95,9 @@ def aliases(table):
 
 
 def check_literal_mailbox(args):
-    """Raise before list/read/mark/save if --mailbox could target another ID."""
-    if not args.mailbox:
+    """Reject alias redirection, and same-folder moves, before backend access."""
+    moving = getattr(args, "command", None) == "move"
+    if not args.mailbox and not moving:
         return  # Intentional configured Inbox alias, not a discovered raw ID.
     try:
         if tomllib is None:
@@ -124,7 +125,6 @@ def check_literal_mailbox(args):
             raise ValueError()
         effective = aliases(config)
         effective.update(aliases(account))
-        target = effective.get(args.mailbox.lower(), args.mailbox)
         # IMAP reserves INBOX as case-insensitive (unlike other mailbox names).
         # Himalaya may list it as "Inbox" while the configured alias is "INBOX".
         # Only apply this equivalence when IMAP is the sole receiving backend;
@@ -132,8 +132,20 @@ def check_literal_mailbox(args):
         other_backends = ("gmail", "jmap", "msgraph", "maildir", "m2dir", "pimdir")
         imap_only = isinstance(account.get("imap", config.get("imap")), dict) and not any(
             key in account or key in config for key in other_backends)
-        same_inbox = imap_only and args.mailbox.lower() == target.lower() == "inbox"
-        if target != args.mailbox and not same_inbox:
-            raise MailboxConfigError("Folder ID conflicts with a configured mailbox alias; refusing to access a different folder.")
+        def same_folder(left, right):
+            return left == right or (imap_only and left.lower() == right.lower() == "inbox")
+
+        for mailbox in ([args.mailbox, args.destination] if moving else [args.mailbox]):
+            if not mailbox:
+                continue  # Only the source can intentionally use the inbox alias.
+            target = effective.get(mailbox.lower(), mailbox)
+            if not same_folder(mailbox, target):
+                raise MailboxConfigError("Folder ID conflicts with a configured mailbox alias; refusing to access a different folder.")
+        if moving:
+            source = args.mailbox or effective["inbox"]
+            if not source:
+                raise ValueError()
+            if same_folder(source, args.destination):
+                raise MailboxConfigError("Source and destination folders must differ.")
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         raise MailboxConfigError("Cannot verify literal folder routing from Himalaya configuration; refusing this folder. Check config paths, account defaults, and mailbox aliases.") from None

@@ -5,6 +5,8 @@ Item {
     property bool active: false
     property string account: ""
     property string config: ""
+    property int generation: 0
+    onConfigChanged: generation++
     property bool demo: false
     readonly property string accountLabel: account || "Fixture"
     property string folderId: ""
@@ -35,6 +37,14 @@ Item {
     property bool loading: false
     property bool reading: false
     property bool marking: false
+    property bool moving: false
+    function moveMessage(id, destination) {
+        record("move", id, destination)
+        fixtures = fixtures.filter(function(row) { return row.id !== id })
+        messages = messages.filter(function(row) { return row.id !== id })
+        if (selectedId === id) { selectedId = ""; message = null }
+        return true
+    }
     property bool savingAttachment: false
     property bool openingAttachment: false
     property string attachmentStatus: ""

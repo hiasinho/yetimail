@@ -26,7 +26,10 @@ BarWidget {
     property bool showHelp: false
     property bool showFolders: false
     property int folderIndex: 0
-    readonly property bool switchingBlocked: mail.marking || mail.savingAttachment || mail.openingAttachment
+    property bool movePicker: false
+    property string moveTargetId: ""
+    property string moveNextId: ""
+    readonly property bool switchingBlocked: mail.moving || mail.marking || mail.savingAttachment || mail.openingAttachment
     function toggleFolders() {
         if (switchingBlocked) return
         if (showFolders) { dismissFolders(); return }
@@ -34,10 +37,24 @@ BarWidget {
         showLinks = false
         showHeaders = false
         showAttachments = false
+        movePicker = false
+        moveTargetId = ""
         showFolders = true
         mail.loadFolders()
         syncFolderCursor()
         folderList.forceActiveFocus()
+    }
+    function openMovePicker() {
+        if (busy || showHelp || showFolders || !targetEnvelope) return
+        var id = targetId
+        toggleFolders()
+        movePicker = true
+        moveTargetId = id
+    }
+    function isCurrentFolder(folder) {
+        // An empty source is a configured alias, not necessarily the folder
+        // named Inbox. The helper resolves that case before any server action.
+        return folder.id === mail.folderId
     }
     function syncFolderCursor() {
         var index = mail.folders.findIndex(function(folder) {
@@ -64,12 +81,23 @@ BarWidget {
     }
     function dismissFolders() {
         showFolders = false
+        movePicker = false
+        moveTargetId = ""
         if (pane === "reader") messageText.forceActiveFocus()
         else inbox.forceActiveFocus()
     }
     function chooseFolder() {
         if (!showFolders || switchingBlocked || mail.foldersLoading || !mail.folders[folderIndex]) return
-        if (mail.selectFolder(mail.folders[folderIndex].id) !== false) dismissFolders()
+        var folder = mail.folders[folderIndex]
+        if (movePicker) {
+            if (busy || isCurrentFolder(folder)) return
+            var index = mail.messages.findIndex(function(message) { return message.id === root.moveTargetId })
+            if (index < 0) { dismissFolders(); return }
+            var next = mail.messages[index + 1] || mail.messages[index - 1]
+            moveNextId = next ? next.id : ""
+            if (mail.moveMessage(moveTargetId, folder.id)) dismissFolders()
+            else moveNextId = ""
+        } else if (mail.selectFolder(folder.id) !== false) dismissFolders()
     }
     function goFolderRole(role) {
         if (showHelp || showFolders || switchingBlocked) return
@@ -184,7 +212,7 @@ BarWidget {
     readonly property string targetId: pane === "reader" ? mail.selectedId : cursorId
     readonly property var targetEnvelope: mail.messages.find(function(m) { return m.id === root.targetId }) || null
     readonly property var displayedEnvelope: mail.messages.find(function(m) { return m.id === mail.selectedId }) || null
-    readonly property bool busy: mail.loading || mail.reading || mail.marking || mail.savingAttachment || mail.openingAttachment
+    readonly property bool busy: mail.moving || mail.loading || mail.reading || mail.marking || mail.savingAttachment || mail.openingAttachment
 
     function selectAccount(name) {
         if (accounts.indexOf(name) !== -1 && !switchingBlocked && !showHelp) selectedAccount = name
@@ -204,7 +232,11 @@ BarWidget {
         else focusList()
     }
     function syncCursor() {
-        if (cursorIndex < 0) cursorId = mail.messages.length ? mail.messages[0].id : ""
+        if (cursorIndex < 0) {
+            cursorId = moveNextId && mail.messages.some(function(message) { return message.id === root.moveNextId })
+                ? moveNextId : mail.messages.length ? mail.messages[0].id : ""
+        }
+        moveNextId = ""
         Qt.callLater(function() {
             if (root.cursorIndex >= 0) inbox.positionViewAtIndex(root.cursorIndex, ListView.Contain)
         })
@@ -265,7 +297,7 @@ BarWidget {
         else if (pane === "reader") back()
         else close()
     }
-    onCurrentAccountChanged: { cursorId = ""; pane = "list"; showHelp = false; showFolders = false; showLinks = false; showHeaders = false; showAttachments = false }
+    onCurrentAccountChanged: { moveNextId = ""; moveTargetId = ""; movePicker = false; cursorId = ""; pane = "list"; showHelp = false; showFolders = false; showLinks = false; showHeaders = false; showAttachments = false }
     onOpenedChanged: {
         if (opened) { showHelp = false; Qt.callLater(focusList) }
         else { showFolders = false; showHelp = false; mail.cancelAttachmentOpen() }
@@ -280,9 +312,13 @@ BarWidget {
     }
     Connections {
         target: mail
+        function onGenerationChanged() {
+            if (root.showFolders && root.movePicker) root.dismissFolders()
+            root.moveNextId = ""
+        }
         function onMessagesChanged() { root.syncCursor() }
         function onFoldersChanged() { root.syncFolderCursor() }
-        function onFolderIdChanged() { root.cursorId = ""; root.pane = "list"; root.showLinks = false; root.showHeaders = false; root.showAttachments = false }
+        function onFolderIdChanged() { root.showFolders = false; root.movePicker = false; root.moveTargetId = ""; root.moveNextId = ""; root.cursorId = ""; root.pane = "list"; root.showLinks = false; root.showHeaders = false; root.showAttachments = false }
         function onMessageChanged() { root.showLinks = false; root.showHeaders = false; root.showAttachments = false; root.linkIndex = 0; root.attachmentIndex = 0 }
         function onSelectedIdChanged() { if (!mail.selectedId) root.pane = "list" }
     }
@@ -317,7 +353,8 @@ BarWidget {
             // or a header button owns focus; they don't depend on key bubbling.
             Shortcut { sequences: ["J", "Down"]; enabled: root.opened; onActivated: root.navigate(1) }
             Shortcut { sequences: ["K", "Up"]; enabled: root.opened; onActivated: root.navigate(-1) }
-            Shortcut { sequences: ["Return", "Enter", "L", "Right"]; enabled: root.opened && !root.showHelp && (root.showFolders || root.pane === "list"); onActivated: root.showFolders ? root.chooseFolder() : root.openCurrent() }
+            Shortcut { sequences: ["Return", "Enter"]; autoRepeat: false; enabled: root.opened && !root.showHelp && (root.showFolders || root.pane === "list"); onActivated: root.showFolders ? root.chooseFolder() : root.openCurrent() }
+            Shortcut { sequences: ["L", "Right"]; enabled: root.opened && !root.showHelp && !(root.showFolders && root.movePicker) && (root.showFolders || root.pane === "list"); onActivated: root.showFolders ? root.chooseFolder() : root.openCurrent() }
             Shortcut { sequence: "F"; enabled: root.opened; onActivated: root.toggleFolders() }
             Shortcut { sequence: "G, I"; enabled: root.opened; onActivated: root.goFolderRole("inbox") }
             Shortcut { sequence: "G, S"; enabled: root.opened; onActivated: root.goFolderRole("sent") }
@@ -339,6 +376,7 @@ BarWidget {
             Shortcut { sequence: "P"; enabled: root.opened && !root.busy && !root.showFolders && !root.showHelp; onActivated: mail.previousPage() }
             Shortcut { sequence: "["; enabled: root.opened; onActivated: root.moveAccount(-1) }
             Shortcut { sequence: "]"; enabled: root.opened; onActivated: root.moveAccount(1) }
+            Shortcut { sequence: "Shift+M"; autoRepeat: false; enabled: root.opened; onActivated: root.openMovePicker() }
             Shortcut { sequence: "M"; autoRepeat: false; enabled: root.opened; onActivated: root.markCurrent(true) }
             Shortcut { sequence: "U"; autoRepeat: false; enabled: root.opened; onActivated: root.markCurrent(false) }
             Shortcut { sequences: ["R", "Ctrl+R"]; enabled: root.opened && !root.showHelp; onActivated: { if (root.showFolders) { if (!mail.foldersLoading && !root.switchingBlocked) mail.loadFolders() } else mail.refresh() } }
@@ -461,7 +499,7 @@ BarWidget {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            MailLabel { Layout.fillWidth: true; text: mail.marking ? "Updating…" : mail.loading ? "Refreshing…" : mail.listError ? "Refresh failed · stale" : mail.messages.length + " messages on page"; opacity: 0.55; font.pixelSize: 10; elide: Text.ElideRight }
+                            MailLabel { Layout.fillWidth: true; text: mail.moving ? "Moving…" : mail.marking ? "Updating…" : mail.loading ? "Refreshing…" : mail.listError ? "Refresh failed · stale" : mail.messages.length + " messages on page"; opacity: 0.55; font.pixelSize: 10; elide: Text.ElideRight }
                             MailButton { text: "Shortcuts ?"; selected: root.showHelp; onClicked: root.toggleHelp() }
                         }
                     }
@@ -667,7 +705,7 @@ BarWidget {
                 y: sidebar.y + accountFlow.y + folderButton.y + folderButton.height + 2
                 width: Math.min(180, parent.width - x)
                 height: Math.max(0, Math.min(322, parent.height - y,
-                    mail.folders.length * 32 + 2 +
+                    mail.folders.length * 32 + 2 + (movePickerTitle.visible ? movePickerTitle.implicitHeight + 12 : 0) +
                     (folderStatus.visible ? folderStatus.implicitHeight + 12 : 0) +
                     (folderRetry.visible ? folderRetry.implicitHeight + 4 : 0)))
                 color: Color.background
@@ -677,6 +715,15 @@ BarWidget {
                     anchors.fill: parent
                     anchors.margins: 1
                     spacing: 0
+                    MailLabel {
+                        id: movePickerTitle
+                        Layout.fillWidth: true
+                        Layout.margins: 6
+                        visible: root.movePicker
+                        text: "Move message to…"
+                        font.pixelSize: 11
+                        color: Color.accent
+                    }
                     MailLabel {
                         id: folderStatus
                         Layout.fillWidth: true
@@ -704,6 +751,7 @@ BarWidget {
                             width: folderList.width
                             height: 32
                             color: index === root.folderIndex ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.09) : "transparent"
+                            opacity: root.movePicker && root.isCurrentFolder(modelData) ? 0.4 : 1
                             RowLayout {
                                 anchors.fill: parent
                                 anchors.leftMargin: 8
@@ -777,6 +825,7 @@ BarWidget {
                                 ["v", "Full selectable headers"],
                                 ["a", "Attachments: j/k select"],
                                 ["s / Enter", "Save / open attachment (in a)"],
+                                ["M", "Move message to folder"],
                                 ["m / u", "Mark read / unread"],
                                 ["r", "Refresh folder"],
                                 ["Ctrl+c", "Copy selected text"],

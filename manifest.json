@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "hiasinho.jitsmail",
   "name": "Jitsmail",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "author": "hiasinho",
-  "description": "A keyboard-first Himalaya mail reader with folder navigation for Omarchy.",
+  "description": "A keyboard-first Himalaya mail reader with folder navigation and message moves for Omarchy.",
   "kinds": ["bar-widget"],
   "entryPoints": { "barWidget": "Widget.qml" },
   "barWidget": {

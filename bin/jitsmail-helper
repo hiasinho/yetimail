@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-shot, read-only Himalaya 2.1 adapter. Only stdout is the JSON protocol."""
+"""One-shot Himalaya 2.1 adapter. Only stdout is the JSON protocol."""
 
 import argparse
 import json
@@ -11,6 +11,7 @@ from html.parser import HTMLParser
 
 
 TIMEOUT = 30
+PAGE_SIZE = 50
 
 
 class HelperError(Exception):
@@ -85,7 +86,8 @@ def run_himalaya(args, command):
 
 
 def list_messages(args):
-    raw = run_himalaya(args, ["--json", "envelope", "list", "--page-size", "50"])
+    raw = run_himalaya(args, ["--json", "envelope", "list", "--page-size", str(PAGE_SIZE),
+                              "--page", str(args.page)])
     try:
         envelopes = json.loads(raw)["envelopes"]
         if not isinstance(envelopes, list):
@@ -110,7 +112,8 @@ def list_messages(args):
             })
     except (ValueError, TypeError, KeyError, AttributeError):
         raise HelperError("Invalid envelope response from Himalaya") from None
-    return {"messages": messages, "account": args.account or "Default"}
+    return {"messages": messages, "account": args.account or "Default",
+            "page": args.page, "hasNext": len(messages) >= PAGE_SIZE}
 
 
 def parse_message(raw, message_id):
@@ -150,35 +153,69 @@ DEMO_MESSAGES = [
 ]
 
 
+DEMO_MESSAGES.extend({
+    "id": f"demo-{number}", "subject": f"Demo message {number}",
+    "from": "Jitsmail <hello@example.test>", "to": "You <you@example.test>",
+    "date": "2026-01-12T09:00:00+00:00", "unread": number % 3 != 0,
+    "body": f"This is demo message {number}. No network was accessed.",
+} for number in range(4, 64))
+
+
+def mark_message(args):
+    run_himalaya(args, ["flag", "add" if args.seen else "remove", "--flag", "seen",
+                       "--", args.id])
+    return {"id": args.id, "seen": args.seen}
+
+
 def demo(args):
     if args.command == "list":
-        return {"account": args.account or "Demo", "messages": [
+        messages = DEMO_MESSAGES[(args.page - 1) * PAGE_SIZE:args.page * PAGE_SIZE]
+        return {"account": args.account or "Demo", "page": args.page,
+                "hasNext": len(messages) >= PAGE_SIZE, "messages": [
             {key: message[key] for key in ("id", "subject", "from", "date", "unread")}
-            for message in DEMO_MESSAGES
+            for message in messages
         ]}
     for message in DEMO_MESSAGES:
         if message["id"] == args.id:
+            if args.command == "mark":
+                return {"id": args.id, "seen": args.seen}
             return {key: value for key, value in message.items() if key != "unread"}
     raise HelperError("Demo message not found")
 
 
 def main(argv=None):
     parser = Parser(description=__doc__)
-    parser.add_argument("command", choices=("list", "read"))
+    parser.add_argument("command", choices=("list", "read", "mark"))
     parser.add_argument("--account", help="Himalaya account name; omit for its default")
     parser.add_argument("--config", help="Himalaya configuration path")
-    parser.add_argument("--id", help="message ID (required for read)")
+    parser.add_argument("--id", help="message ID (required for read and mark)")
+    parser.add_argument("--page", type=int, help="list page, starting at 1")
+    flags = parser.add_mutually_exclusive_group()
+    flags.add_argument("--seen", dest="seen", action="store_true", default=None)
+    flags.add_argument("--unseen", dest="seen", action="store_false")
     parser.add_argument("--demo", action="store_true", help="use fixtures; never invoke Himalaya")
     try:
         args = parser.parse_args(argv)
-        if args.command == "read" and not args.id:
-            raise HelperError("read requires --id")
+        if args.command in ("read", "mark") and not args.id:
+            raise HelperError(f"{args.command} requires --id")
         if args.command == "list" and args.id is not None:
-            raise HelperError("--id is only supported for read")
+            raise HelperError("--id is only supported for read and mark")
+        if args.page is not None and (args.command != "list" or args.page < 1):
+            raise HelperError("--page requires list and a positive integer")
+        if args.command == "mark":
+            if not args.account or not args.account.strip():
+                raise HelperError("mark requires an explicit --account")
+            if args.seen is None:
+                raise HelperError("mark requires --seen or --unseen")
+        elif args.seen is not None:
+            raise HelperError("--seen and --unseen are only supported for mark")
+        args.page = args.page or 1
         if args.demo:
             result = demo(args)
         elif args.command == "list":
             result = list_messages(args)
+        elif args.command == "mark":
+            result = mark_message(args)
         else:
             raw = run_himalaya(args, ["message", "read", "--raw", "--", args.id])
             try:

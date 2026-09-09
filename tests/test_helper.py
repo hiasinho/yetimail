@@ -48,10 +48,86 @@ class HelperTest(unittest.TestCase):
         })
         self.assertEqual([m["unread"] for m in result["messages"]], [False, True, False, True])
         self.assertEqual(run.call_args.args[0], [
-            "himalaya", "--json", "envelope", "list", "--page-size", "50"])
+            "himalaya", "--json", "envelope", "list", "--page-size", "50", "--page", "1"])
+        self.assertEqual(result["page"], 1)
+        self.assertFalse(result["hasNext"])
         self.assertEqual(run.call_args.kwargs["timeout"], 30)
         self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
         self.assertFalse(run.call_args.kwargs.get("shell", False))
+
+    def test_pagination_command_and_conservative_next_page(self):
+        for count in (0, 13, 50):
+            with self.subTest(count=count), patch("subprocess.run", return_value=
+                    subprocess.CompletedProcess([], 0, json.dumps({"envelopes": [
+                        {"id": str(i)} for i in range(count)]}).encode(), b"")) as run:
+                status, result = self.invoke("list", "--page", "3", "--account", "work")
+                self.assertEqual(status, 0)
+                self.assertEqual(result["page"], 3)
+                self.assertEqual(result["hasNext"], count == 50)
+                self.assertEqual(len(result["messages"]), count)
+                self.assertEqual(run.call_args.args[0], ["himalaya", "--account=work",
+                    "--json", "envelope", "list", "--page-size", "50", "--page", "3"])
+
+    def test_mark_commands_require_explicit_account_and_keep_id_literal(self):
+        for flag, operation, seen in (("--seen", "add", True), ("--unseen", "remove", False)):
+            with self.subTest(flag=flag), patch("subprocess.run", return_value=
+                    subprocess.CompletedProcess([], 0, b"", b"")) as run:
+                status, result = self.invoke("mark", "--account=--work", "--config", "/tmp/a b",
+                                             "--id=--flag; dangerous", flag)
+                self.assertEqual(status, 0)
+                self.assertEqual(result, {"id": "--flag; dangerous", "seen": seen})
+                self.assertEqual(run.call_args.args[0], ["himalaya", "--config=/tmp/a b",
+                    "--account=--work", "flag", operation, "--flag", "seen", "--", "--flag; dangerous"])
+                self.assertFalse(run.call_args.kwargs.get("shell", False))
+
+    def test_mark_failure_does_not_report_success_or_private_details(self):
+        with patch("subprocess.run", return_value=
+                subprocess.CompletedProcess([], 3, b"SECRET", b"PRIVATE")):
+            status, result = self.invoke("mark", "--id", "1", "--account", "work", "--seen")
+        self.assertEqual(status, 1)
+        self.assertEqual(result, {"error": "Himalaya failed (exit 3)"})
+
+    def test_pagination_and_mark_validation(self):
+        cases = [
+            ("list", "--page", value) for value in ("0", "-1", "abc", "1.5", "")
+        ] + [
+            ("read", "--id", "1", "--page", "1"),
+            ("list", "--seen"), ("read", "--id", "1", "--unseen"),
+            ("mark", "--id", "1", "--seen"),
+            ("mark", "--id", "1", "--seen", "--account", ""),
+            ("mark", "--id", "1", "--seen", "--account", "  "),
+            ("mark", "--account", "work", "--seen"),
+            ("mark", "--account", "work", "--id", "1"),
+            ("mark", "--account", "work", "--id", "1", "--seen", "--unseen"),
+            ("mark", "--account", "work", "--id", "1", "--seen", "--page", "1"),
+        ]
+        with patch("subprocess.run") as run:
+            for args in cases:
+                for demo in ((), ("--demo",)):
+                    with self.subTest(args=args, demo=demo):
+                        status, result = self.invoke(*args, *demo)
+                        self.assertEqual(status, 1)
+                        self.assertEqual(set(result), {"error"})
+            run.assert_not_called()
+
+    def test_demo_pages_and_explicit_mark_are_offline(self):
+        with patch("subprocess.run", side_effect=AssertionError("must remain offline")):
+            pages = [self.invoke("list", "--demo", "--page", str(page))[1]
+                     for page in (1, 2, 3)]
+            self.assertEqual([p["page"] for p in pages], [1, 2, 3])
+            self.assertEqual([len(p["messages"]) for p in pages], [50, 13, 0])
+            self.assertEqual([p["hasNext"] for p in pages], [True, False, False])
+            ids = [m["id"] for page in pages for m in page["messages"]]
+            self.assertEqual(len(set(ids)), 63)
+            for id in (ids[0], ids[-1]):
+                self.assertEqual(self.invoke("read", "--demo", "--id", id)[0], 0)
+                for flag, seen in (("--seen", True), ("--unseen", False)):
+                    status, result = self.invoke("mark", "--demo", "--account", "Demo", "--id", id, flag)
+                    self.assertEqual(status, 0)
+                    self.assertEqual(result, {"id": id, "seen": seen})
+            status, result = self.invoke("mark", "--demo", "--account", "Demo", "--id", "missing", "--seen")
+            self.assertEqual(status, 1)
+            self.assertEqual(result, {"error": "Demo message not found"})
 
     def test_internationalized_sender_addresses(self):
         envelopes = [{"id": "1", "from": [

@@ -12,6 +12,11 @@ Item {
     property string selectedId: ""
     property string listError: ""
     property string readError: ""
+    property string actionError: ""
+    property int page: 1
+    property bool hasNext: false
+    property bool marking: false
+    property var demoSeen: ({})
     property string accountLabel: account || "Default account"
     // Quickshell's running flips only after launch, so latch requests ourselves.
     property bool loading: false
@@ -23,6 +28,11 @@ Item {
     property int readGeneration: 0
     property int listRequest: 0
     property int readRequest: 0
+    property int requestedPage: 1
+    property int markGeneration: 0
+    property int markRequest: 0
+    property string markId: ""
+    property bool markSeen: false
     readonly property int unread: messages.filter(function(m) { return m.unread }).length
 
     function command(operation) {
@@ -40,23 +50,66 @@ Item {
         selectedId = ""
         listError = ""
         readError = ""
+        actionError = ""
+        page = 1
+        hasNext = false
+        demoSeen = ({})
         accountLabel = account || "Default account"
         // In-flight results are discarded; refresh after they finish.
         Qt.callLater(refresh)
     }
 
-    function refresh() {
-        if (!ready || !active || loading) return
+    function refresh() { fetchPage(page) }
+
+    function nextPage() {
+        if (hasNext) fetchPage(page + 1)
+    }
+
+    function previousPage() {
+        if (page > 1) fetchPage(page - 1)
+    }
+
+    function fetchPage(target) {
+        if (!ready || !active || loading || marking || (reading && target !== page)) return
+        if (target !== page) {
+            selectedId = ""
+            message = null
+            readError = ""
+        }
         listError = ""
+        actionError = ""
+        requestedPage = target
         listGeneration = generation
         loading = true
         listRequest++
-        listProcess.command = command("list")
+        listProcess.command = command("list").concat(["--page", String(target)])
         listProcess.running = true
     }
 
+    function setRead(id, seen) {
+        if (!ready || !active || loading || reading || marking) return
+        actionError = ""
+        if (!account.trim() && !demo) {
+            actionError = "Select an explicit account before changing read status."
+            return
+        }
+        markId = String(id)
+        if (!messages.some(function(m) { return m.id === markId })) {
+            actionError = "Message is not on the current page."
+            return
+        }
+        markSeen = !!seen
+        markGeneration = generation
+        marking = true
+        markRequest++
+        var args = command("mark")
+        if (!account && demo) args.push("--account", "Demo")
+        markProcess.command = args.concat(["--id", markId, markSeen ? "--seen" : "--unseen"])
+        markProcess.running = true
+    }
+
     function readMessage(id) {
-        if (!active || reading) return
+        if (!active || reading || marking || (loading && requestedPage !== page)) return
         selectedId = String(id)
         message = null
         readError = ""
@@ -104,7 +157,15 @@ Item {
             if (root.listGeneration !== root.generation) { Qt.callLater(root.refresh); return }
             try {
                 var data = root.result(listOutput.text, code)
-                root.messages = data.messages
+                if (!Array.isArray(data.messages)) throw new Error("Invalid message list from mail helper.")
+                root.messages = data.messages.map(function(m) {
+                    if (root.demo && Object.prototype.hasOwnProperty.call(root.demoSeen, m.id))
+                        m.unread = !root.demoSeen[m.id]
+                    return m
+                })
+                // Older lifecycle fixtures omit pagination metadata.
+                root.page = data.page === undefined ? root.requestedPage : data.page
+                root.hasNext = data.hasNext === undefined ? data.messages.length >= 50 : !!data.hasNext
                 root.accountLabel = data.account || root.account || "Default account"
             } catch (e) { root.listError = e.message }
         }
@@ -119,15 +180,46 @@ Item {
             Qt.callLater(function() {
                 if (request !== root.readRequest || !root.reading || readProcess.running) return
                 root.reading = false
-                if (root.readGeneration === root.generation)
-                    root.readError = "Could not launch Python 3. Check that python3 is installed and on PATH."
+                if (root.readGeneration !== root.generation) Qt.callLater(root.refresh)
+                else root.readError = "Could not launch Python 3. Check that python3 is installed and on PATH."
             })
         }
         onExited: function(code, status) {
             root.reading = false
-            if (root.readGeneration !== root.generation) return
+            if (root.readGeneration !== root.generation) { Qt.callLater(root.refresh); return }
             try { root.message = root.result(readOutput.text, code) }
             catch (e) { root.readError = e.message }
+        }
+    }
+    Process {
+        id: markProcess
+        stdout: StdioCollector { id: markOutput; waitForEnd: true }
+        stderr: StdioCollector { waitForEnd: true }
+        onRunningChanged: {
+            if (running) return
+            var request = root.markRequest
+            Qt.callLater(function() {
+                if (request !== root.markRequest || !root.marking || markProcess.running) return
+                root.marking = false
+                if (root.markGeneration !== root.generation) Qt.callLater(root.refresh)
+                else root.actionError = "Could not launch Python 3. Check that python3 is installed and on PATH."
+            })
+        }
+        onExited: function(code, status) {
+            root.marking = false
+            if (root.markGeneration !== root.generation) { Qt.callLater(root.refresh); return }
+            try {
+                var data = root.result(markOutput.text, code)
+                if (data.id !== root.markId || data.seen !== root.markSeen)
+                    throw new Error("Invalid read-status response from mail helper.")
+                root.messages = root.messages.map(function(m) {
+                    if (m.id !== root.markId) return m
+                    var updated = Object.assign({}, m)
+                    updated.unread = !root.markSeen
+                    return updated
+                })
+                if (root.demo) root.demoSeen[root.markId] = root.markSeen
+            } catch (e) { root.actionError = e.message }
         }
     }
 }

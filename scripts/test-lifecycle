@@ -52,6 +52,7 @@ while [ "$#" -gt 0 ]; do
         --config) config=$2; shift 2 ;;
         --demo) demo=true; shift ;;
         --id) id=$2; shift 2 ;;
+        --page) shift 2 ;;
         *) printf 'BAD ARGUMENT\n' >> "$JITSMAIL_CALLS"; exit 98 ;;
     esac
 done

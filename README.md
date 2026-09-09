@@ -1,14 +1,15 @@
 # Jitsmail
 
-A small Omarchy mail panel powered by **Himalaya 2.1**. First milestone: read your inbox without leaving the desktop.
+A keyboard-first Omarchy mail panel powered by **Himalaya 2.1**. Read and manage inbox status without leaving the desktop.
 
 - Mail bar widget and two-pane inbox/reader.
-- Latest 50 inbox messages, newest first; click to read.
+- Inbox messages in pages of 50, newest first; mouse or Vim-like keyboard navigation.
 - Optional account selector restricted to an explicit allowlist; only the selected account is queried.
-- Unread badge counts **only the loaded 50**, not the whole mailbox.
+- Unread badge counts **only the current page**, not the whole mailbox.
 - Automatic refresh every 120 seconds, plus Refresh / Ctrl+R.
 - Plain-text message display, including inert HTML-to-text fallback.
-- Read-only: opening a message does **not** mark it seen. No sending, deleting, or remote images.
+- Explicit mark-read / mark-unread actions. Opening a message does **not** mark it seen.
+- No sending, deleting, or remote images.
 - Demo mode requires no account and never invokes Himalaya.
 
 Inspired by [omarchy-mail](https://github.com/roymckenzie/omarchy-mail). This is an independent implementation using Himalaya rather than implementing IMAP itself.
@@ -59,7 +60,32 @@ Settings are declared in `manifest.json` and stored in the widget's entry in `~/
 
 `accounts` is an optional comma-separated allowlist. Buttons switch between those accounts, clearing the previous inbox and reader; excluded accounts are never discovered or queried. The badge belongs to the selected account, not a combined inbox. Selection is per bar instance and resets to `account` after reload (or the first allowed account if the preferred account is excluded).
 
-With an empty allowlist, the single-account behavior is unchanged. An empty `account` or `config` uses Himalaya's default. A nonempty config is a path passed directly to Himalaya. `demo: true` uses synthetic messages. Escape or Close dismisses the panel. Selecting another message waits until the current read completes.
+With an empty allowlist, the single-account behavior is unchanged. An empty `account` or `config` uses Himalaya's default. A nonempty config is a path passed directly to Himalaya. `demo: true` uses synthetic messages. `q` or Close dismisses the panel. Selecting another message waits until the current read completes.
+
+## Keyboard navigation
+
+All commands work inside the panel, including while the selectable message text has focus. The highlighted row is the list cursor; the ▸ indicator shows which pane the navigation keys control.
+
+| Key | Action |
+| --- | --- |
+| `j` / `k`, `↓` / `↑` | Select next/previous message in list; scroll in reader |
+| `Enter`, `l`, `→` | Open the highlighted message and focus reader |
+| `h`, `←` | Focus list |
+| `Tab`, `Shift+Tab` | Switch panes (opens highlighted message if needed) |
+| `gg` / `G` | First/last row on this page; top/bottom of reader |
+| `Ctrl+d` / `Ctrl+u` | Half-page down/up in active pane |
+| `n` / `p` | Older/newer page |
+| `[` / `]` | Previous/next allowed account |
+| `m` / `u` | Mark target message read/unread |
+| `r`, `Ctrl+r` | Refresh current page |
+| `?` | Toggle shortcut help |
+| `Esc` | Dismiss help, then return to list, then close panel |
+| `q` | Close panel |
+| `Ctrl+c` | Copy selected message text |
+
+Status changes target the highlighted row in list mode, or the open message in reader mode. Only explicit `m`/`u` commands or their buttons change server flags. Real status changes require an explicitly selected account (not an unnamed default); the `hiash,hiasinho` allowlist supplies this. Actions wait for server success before updating the badge; failures leave the old status intact. No automatic marking when opening or navigating.
+
+Older/newer navigation preserves the current page on failure. A full page enables Older; an exact multiple of 50 can therefore have a final empty page. IMAP pages can shift as new mail arrives. Account switching returns to page 1.
 
 ## Develop and test
 
@@ -67,6 +93,8 @@ With an empty allowlist, the single-account behavior is unchanged. An empty `acc
 python3 -m unittest discover -s tests -v
 scripts/smoke-ui
 scripts/test-lifecycle
+scripts/test-pagination
+scripts/test-keyboard
 bin/jitsmail-helper list --demo
 bin/jitsmail-helper read --demo --id demo-1
 ```
@@ -74,6 +102,8 @@ bin/jitsmail-helper read --demo --id demo-1
 The smoke test launches a temporary **offscreen** Quickshell with demo data, tests the QML → helper → inbox/read round trip, then exits. It does not install/enable anything or access your mail. Override `OMARCHY_SHELL_PATH` if Omarchy's shell is elsewhere. A guard executable prevents accidental Himalaya access even if demo mode regresses.
 
 The lifecycle tests use shell fixtures instead of Python/Himalaya to check delayed host settings, overlapping requests, stale-result rejection, and failed launches. They replace only the compositor popup container for offscreen operation. Missing-executable warnings are expected in these tests.
+
+Pagination tests exercise the actual service with offline fixtures and demo data, including failed requests and stale account results. Keyboard tests send real Qt key events to the production widget, including navigation while its TextArea has focus; only the backend and compositor popup are replaced. Install Qt's QML `QtTest` module to run keyboard tests.
 
 For an interactive demo:
 

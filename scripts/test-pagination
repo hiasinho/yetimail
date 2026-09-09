@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+# Offline regressions using the production MailService and Quickshell Process API.
+# Real Python runs only with --demo; every other helper request is a shell fixture.
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+quickshell=$(command -v quickshell)
+export JITSMAIL_TEST_PYTHON=$(command -v python3)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+ln -s "$root/MailService.qml" "$work/MailService.qml"
+# resolvedUrl may use either the symlink location or the source location.
+mkdir "$work/bin"
+ln -s "$root/bin/jitsmail-helper" "$work/bin/jitsmail-helper"
+cat > "$work/bin/himalaya" <<'SH'
+#!/bin/sh
+printf 'FORBIDDEN Himalaya invocation\n' >> "$JITSMAIL_CALLS"
+exit 99
+SH
+cat > "$work/bin/python3" <<'SH'
+#!/bin/sh
+helper=$1; shift
+if [ "$JITSMAIL_SCENARIO" = demo ]; then
+    # Refuse delegation unless the production helper is explicitly offline.
+    for arg do
+        if [ "$arg" = --demo ]; then
+            exec "$JITSMAIL_TEST_PYTHON" "$helper" "$@"
+        fi
+    done
+    printf 'FORBIDDEN non-demo Python invocation\n' >> "$JITSMAIL_CALLS"
+    exit 99
+fi
+operation=$1; shift
+account=default id=none page=1 seen=none
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --account) account=$2; shift 2 ;;
+        --id) id=$2; shift 2 ;;
+        --page) page=$2; shift 2 ;;
+        --seen) seen=true; shift ;;
+        --unseen) seen=false; shift ;;
+        *) printf 'BAD ARGUMENT\n' >> "$JITSMAIL_CALLS"; exit 98 ;;
+    esac
+done
+printf '%s account=%s id=%s page=%s seen=%s\n' "$operation" "$account" "$id" "$page" "$seen" >> "$JITSMAIL_CALLS"
+/usr/bin/sleep 0.2
+case "$operation" in
+    list)
+        if [ "$page" = 3 ]; then printf '{"error":"fixture page failure"}\n'; exit 1; fi
+        # Deliberately omit page: legacy helper responses fall back to requestedPage.
+        printf '{"account":"%s","hasNext":true,"messages":[{"id":"shared","subject":"%s page %s","unread":true}]}\n' "$account" "$account" "$page" ;;
+    read) printf '{"id":"%s","body":"fixture"}\n' "$id" ;;
+    mark)
+        if [ "$seen" = false ]; then printf '{"error":"fixture mark failure"}\n'; exit 1; fi
+        printf '{"id":"%s","seen":%s}\n' "$id" "$seen" ;;
+    *) printf 'BAD OPERATION\n' >> "$JITSMAIL_CALLS"; exit 98 ;;
+esac
+SH
+chmod +x "$work/bin/python3" "$work/bin/himalaya"
+cat > "$work/shell.qml" <<'QML'
+import QtQuick
+import Quickshell
+ShellRoot {
+    id: test
+    property bool demoMode: Quickshell.env("JITSMAIL_SCENARIO") === "demo"
+    property int phase: 0
+    property int ticks: 0
+    property bool failed: false
+    function check(ok, reason) {
+        if (!ok) {
+            failed = true
+            console.error("PAGINATION_FAIL phase " + phase + ": " + reason)
+            Qt.quit()
+        }
+        return ok
+    }
+    function pass() { console.log("PAGINATION_OK " + (demoMode ? "demo" : "fixture")); Qt.quit() }
+    function busyGuards() {
+        var listRequest = mail.listRequest
+        var markRequest = mail.markRequest
+        mail.nextPage()
+        mail.previousPage()
+        mail.setRead(mail.messages[0].id, true)
+        return check(mail.listRequest === listRequest && mail.markRequest === markRequest,
+                     "busy pagination/mutation launched another request")
+    }
+    MailService {
+        id: mail
+        demo: test.demoMode
+        account: test.demoMode ? "" : "hiash"
+        onMessagesChanged: {
+            if (test.demoMode) return
+            if (messages.length)
+                test.check(messages[0].subject.indexOf((account || "default") + " page ") === 0,
+                           "transient stale account envelopes")
+            else if (test.phase === 8 && account === "hiasinho" && !marking)
+                test.check(false, "stale mark published an empty replacement list")
+        }
+    }
+    Timer {
+        interval: 25; running: true; repeat: true
+        onTriggered: {
+            if (test.failed) return
+            if (++test.ticks > 400) { test.check(false, "timeout"); return }
+            if (mail.loading || mail.reading || mail.marking) return
+            if (test.demoMode) { demoStep(); return }
+            fixtureStep()
+        }
+        function fixtureStep() {
+            switch (test.phase) {
+            case 0:
+                if (!mail.messages.length) return
+                if (!test.check(mail.page === 1 && mail.hasNext, "initial page")) return
+                mail.nextPage()
+                if (!test.check(mail.loading && mail.page === 1, "page committed before fetch")) return
+                if (!test.busyGuards()) return
+                break
+            case 1:
+                if (!test.check(mail.page === 2 && mail.messages[0].subject === "hiash page 2", "page success/fallback")) return
+                mail.readMessage("shared")
+                if (!test.check(mail.reading, "read latch")) return
+                if (!test.busyGuards()) return
+                break
+            case 2:
+                if (!test.check(mail.message && mail.selectedId === "shared", "read response")) return
+                mail.readError = "old read error"
+                mail.actionError = "old action error"
+                mail.nextPage()
+                if (!test.check(mail.page === 2 && !mail.message && !mail.selectedId &&
+                                !mail.readError && !mail.actionError, "page transition clearing")) return
+                if (!test.busyGuards()) return
+                break
+            case 3:
+                if (!test.check(mail.page === 2 && mail.messages[0].subject === "hiash page 2" &&
+                                mail.listError === "fixture page failure", "failed page replaced old state")) return
+                mail.refresh()
+                if (!test.check(mail.requestedPage === 2 && !mail.listError, "refresh must retry current page")) return
+                break
+            case 4:
+                mail.setRead("shared", true)
+                if (!test.check(mail.marking && mail.messages[0].unread, "optimistic seen update")) return
+                if (!test.busyGuards()) return
+                break
+            case 5:
+                if (!test.check(!mail.messages[0].unread && !mail.actionError, "seen success")) return
+                mail.setRead("shared", false)
+                if (!test.check(mail.marking && !mail.messages[0].unread, "optimistic unseen update")) return
+                break
+            case 6:
+                if (!test.check(!mail.messages[0].unread && mail.actionError === "fixture mark failure", "failed mark changed envelope")) return
+                mail.previousPage()
+                if (!test.check(mail.page === 2 && !mail.actionError, "previous page committed early")) return
+                break
+            case 7:
+                if (!test.check(mail.page === 1, "previous page success")) return
+                mail.setRead("shared", true)
+                // Change account before Process launch; command must retain the old snapshot.
+                mail.account = "hiasinho"
+                if (!test.check(mail.marking && mail.page === 1 && !mail.messages.length &&
+                                !mail.hasNext && !mail.actionError && !mail.selectedId, "account reset during mark")) return
+                break
+            case 8:
+                if (!mail.messages.length) return
+                if (!test.check(mail.accountLabel === "hiasinho" && mail.messages[0].unread &&
+                                !mail.actionError, "stale mark applied to new account with same ID")) return
+                mail.nextPage()
+                // Also discard a successful old-account page response.
+                mail.account = "final"
+                break
+            case 9:
+                if (!mail.messages.length) return
+                if (!test.check(mail.page === 1 && mail.messages[0].subject === "final page 1" &&
+                                !mail.listError, "stale page committed after reset")) return
+                mail.account = ""
+                break
+            case 10:
+                if (!mail.messages.length) return
+                var request = mail.markRequest
+                mail.setRead("shared", true)
+                if (!test.check(!mail.marking && mail.markRequest === request && mail.actionError &&
+                                mail.messages[0].unread, "default account mutation was allowed")) return
+                test.pass(); return
+            }
+            test.phase++
+        }
+        function demoStep() {
+            if (!test.check(!mail.listError && !mail.readError && !mail.actionError, "demo helper error")) return
+            switch (test.phase) {
+            case 0:
+                if (!mail.messages.length) return
+                if (!test.check(mail.page === 1 && mail.messages.length === 50 && mail.hasNext, "demo first page")) return
+                mail.setRead("demo-1", true)
+                if (!test.check(mail.marking && mail.messages[0].unread, "demo optimistic mutation")) return
+                break
+            case 1:
+                if (!test.check(!mail.messages[0].unread, "demo seen success")) return
+                mail.refresh(); break
+            case 2:
+                if (!test.check(!mail.messages[0].unread, "demo mark lost on refresh")) return
+                mail.nextPage(); break
+            case 3:
+                if (!test.check(mail.page === 2 && mail.messages.length === 13 && !mail.hasNext, "demo last page")) return
+                var request = mail.listRequest
+                mail.nextPage()
+                if (!test.check(mail.listRequest === request, "advanced past last page")) return
+                mail.previousPage(); break
+            case 4:
+                if (!test.check(mail.page === 1 && !mail.messages[0].unread, "demo mark lost after pagination")) return
+                mail.setRead("demo-1", false); break
+            case 5:
+                if (!test.check(mail.messages[0].unread, "demo unread success")) return
+                mail.refresh(); break
+            case 6:
+                if (!test.check(mail.messages[0].unread, "demo unread lost on refresh")) return
+                mail.nextPage(); break
+            case 7:
+                mail.account = "other-demo"
+                if (!test.check(mail.page === 1 && !mail.messages.length && !mail.hasNext, "demo account reset")) return
+                break
+            case 8:
+                if (!mail.messages.length) return
+                if (!test.check(mail.page === 1 && mail.messages[0].unread, "demo account isolation")) return
+                test.pass(); return
+            }
+            test.phase++
+        }
+    }
+}
+QML
+status=0
+for scenario in fixture demo; do
+    export JITSMAIL_SCENARIO="$scenario" JITSMAIL_CALLS="$work/$scenario.calls"
+    : > "$JITSMAIL_CALLS"
+    printf '\n=== pagination: %s ===\n' "$scenario"
+    if ! QT_QPA_PLATFORM=offscreen PATH="$work/bin" \
+        /usr/bin/timeout --kill-after=2 15 "$quickshell" -p "$work" --no-color > "$work/$scenario.output" 2>&1; then
+        echo "PAGINATION_FAIL $scenario: shell failed or timed out"
+        status=1
+    fi
+    cat "$work/$scenario.output"
+    cat "$JITSMAIL_CALLS"
+    if ! grep -q "PAGINATION_OK $scenario" "$work/$scenario.output" ||
+       grep -Eq 'PAGINATION_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration' "$work/$scenario.output" ||
+       grep -Eq 'FORBIDDEN|BAD ' "$JITSMAIL_CALLS"; then status=1; fi
+    if [[ $scenario == fixture ]]; then
+        # Exact sequence catches duplicate launches and mutable account/id/page snapshots.
+        cat > "$work/expected.calls" <<'CALLS'
+list account=hiash id=none page=1 seen=none
+list account=hiash id=none page=2 seen=none
+read account=hiash id=shared page=1 seen=none
+list account=hiash id=none page=3 seen=none
+list account=hiash id=none page=2 seen=none
+mark account=hiash id=shared page=1 seen=true
+mark account=hiash id=shared page=1 seen=false
+list account=hiash id=none page=1 seen=none
+mark account=hiash id=shared page=1 seen=true
+list account=hiasinho id=none page=1 seen=none
+list account=hiasinho id=none page=2 seen=none
+list account=final id=none page=1 seen=none
+list account=default id=none page=1 seen=none
+CALLS
+        if ! diff -u "$work/expected.calls" "$JITSMAIL_CALLS"; then status=1; fi
+    fi
+done
+if [[ $status == 0 ]]; then echo JITSMAIL_PAGINATION_OK; fi
+exit "$status"

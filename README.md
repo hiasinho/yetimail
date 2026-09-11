@@ -7,6 +7,7 @@ A keyboard-first Omarchy mail panel powered by **Himalaya 2.1**. Read and manage
 - Keyboard folder picker and Inbox / Sent / Archive / Trash shortcuts.
 - Page-local multi-selection supports bulk move, archive, trash, and read/unread actions.
 - Optional account selector restricted to an explicit allowlist; only the selected account is queried.
+- Read-only account overview with private, editable Yetimail display labels.
 - Unread badge counts **only the current page**, not the whole mailbox.
 - Automatic refresh every 120 seconds, plus Refresh / Ctrl+R.
 - Safe text-only message display with compact numbered web links and destination previews.
@@ -67,7 +68,11 @@ Settings are declared in `manifest.json` and stored in the widget's entry in `~/
 }
 ```
 
-`accounts` is an optional comma-separated allowlist. The account icon's dropdown switches between those accounts, clearing the previous inbox and reader; excluded accounts are never discovered or queried. The badge belongs to the selected account, not a combined inbox. Selection is per bar instance and resets to `account` after reload (or the first allowed account if the preferred account is excluded).
+`accounts` is an optional comma-separated allowlist. The account icon's dropdown switches between those accounts, clearing the previous inbox and reader; excluded accounts are never queried for mail. The badge belongs to the selected account, not a combined inbox. Selection is per bar instance and resets to `account` after reload (or the first allowed account if the preferred account is excluded).
+
+The gear beside the account and mailbox controls opens a read-only overview of the accounts declared in the effective Himalaya configuration. Yetimail reads this safe overview from local TOML when the widget starts and refreshes it when Settings opens; it does not invoke Himalaya, test connections, authenticate, or fetch mail for the overview. The overview shows account IDs, email/sender identity, default status, and configured backend types. Authentication values, login names, credential commands, tokens, server addresses, and arbitrary configuration values are never returned to QML. Accounts shown in the overview are not automatically enabled for mail access; the explicit `accounts` allowlist remains authoritative.
+
+Friendly labels can be edited in that overview. They affect only Yetimail's account picker, tooltips, and headings; Himalaya commands continue to receive the original account ID. Labels are stored separately in `$XDG_CONFIG_HOME/yetimail/account-labels.json` (normally `~/.config/yetimail/account-labels.json`) using an owner-only directory, private file permissions, and atomic replacement. Clear a label to fall back to its account ID. Yetimail refuses unsafe label paths or files rather than following symlinks. Demo mode neither reads nor writes this file.
 
 With an empty allowlist, the single-account behavior is unchanged. An empty `account` or `config` uses Himalaya's default. A nonempty config is a path passed directly to Himalaya. `demo: true` uses synthetic messages. `q` or Close dismisses the panel. Selecting another message waits until the current read completes.
 
@@ -197,7 +202,7 @@ Neither command accesses real accounts.
 
 ## Design
 
-The reference-inspired layout uses a compact monospace sidebar, filled Material Design Nerd Font icons, aligned account/mailbox dropdowns, dense sender/subject rows, and a separate message header above the reader. The sidebar names the current folder, sizes short mailbox pages closer to their content until the reader opens, and combines message count, page status, navigation, and shortcut help in one footer. The compact reader header shows the sender, recipients, and a short timestamp without redundant From/Date rows. HTML-to-text conversion preserves paragraph breaks while collapsing excessive blank space; it still never renders active HTML. Press `v` (or the header's ≡ button) to view and copy complete headers, including long subjects and recipient lists. Keyboard help opens as a floating shortcut card rather than shifting the inbox. Controls only expose implemented actions; compose and search are not placeholders.
+The reference-inspired layout uses a compact monospace sidebar, filled Material Design Nerd Font icons, aligned account/mailbox controls with a settings gear, dense sender/subject rows, and a separate message header above the reader. The sidebar names the current folder, sizes short mailbox pages closer to their content until the reader opens, and combines message count, page status, navigation, and shortcut help in one footer. The compact reader header shows the sender, recipients, and a short timestamp without redundant From/Date rows. HTML-to-text conversion preserves paragraph breaks while collapsing excessive blank space; it still never renders active HTML. Press `v` (or the header's ≡ button) to view and copy complete headers, including long subjects and recipient lists. Keyboard help opens as a floating shortcut card rather than shifting the inbox. Controls only expose implemented actions; compose and search are not placeholders.
 
 ```text
 Widget.qml → MailService.qml → bin/yetimail-helper → Himalaya → IMAP
@@ -207,7 +212,7 @@ ui/*.qml
   presentation
 ```
 
-`Widget.qml` remains the BarWidget shell integration and sole interaction coordinator: it owns keyboard commands, selection and reader modes, modal guards, deletion snapshots, mutation coordination, and service/external-link calls. `ui/InboxPane.qml` and `ui/ReaderPane.qml` render independent data inputs and emit user-intent signals; their imperative APIs only focus, reveal rows, or scroll. `ui/AccountPicker.qml`, `ui/FolderPicker.qml`, `ui/DeleteConfirmation.qml`, and `ui/ShortcutHelp.qml` are stable sibling overlays, not children of disabled mailbox controls. The inbox exposes the account and mailbox buttons' anchor geometry so each picker stays directly beneath its icon. `ui/MailLabel.qml` and `ui/MailButton.qml` share the monospace presentation defaults; labels and selectable message text remain plain text. Components never receive the widget/controller or call MailService, and no loaders recreate panes on mode changes.
+`Widget.qml` remains the BarWidget shell integration and sole interaction coordinator: it owns keyboard commands, selection and reader modes, modal guards, deletion snapshots, mutation coordination, and service/external-link calls. `ui/InboxPane.qml` and `ui/ReaderPane.qml` render independent data inputs and emit user-intent signals; their imperative APIs only focus, reveal rows, or scroll. `ui/AccountPicker.qml`, `ui/AccountSettings.qml`, `ui/FolderPicker.qml`, `ui/DeleteConfirmation.qml`, and `ui/ShortcutHelp.qml` are stable sibling overlays, not children of disabled mailbox controls. The inbox exposes the account and mailbox buttons' anchor geometry so each picker stays directly beneath its icon. `ui/MailLabel.qml` and `ui/MailButton.qml` share the monospace presentation defaults; labels and selectable message text remain plain text. Components never receive the widget/controller or call MailService, and no loaders recreate panes on mode changes.
 
 The adapter executes argument arrays, never shell command strings. Account credentials stay under Himalaya's control. The helper suppresses backend stderr in UI errors because it may contain private configuration details. For connection errors, troubleshoot with Himalaya directly in a private terminal.
 

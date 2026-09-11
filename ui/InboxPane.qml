@@ -35,6 +35,7 @@ ColumnLayout {
     signal refreshRequested()
     signal foldersRequested()
     signal accountsRequested()
+    signal settingsRequested()
     signal listFocused()
     signal messageRequested(string messageId)
     signal toggleSelectionRequested(string messageId)
@@ -121,6 +122,16 @@ ColumnLayout {
             onClicked: view.foldersRequested()
         }
         Item { Layout.fillWidth: true }
+        MailButton {
+            objectName: "accountSettingsButton"
+            Layout.preferredWidth: 36
+            Layout.preferredHeight: 36
+            iconText: view.icons.settings
+            tooltipText: "Account settings"
+            bordered: true
+            enabled: !view.switchingBlocked
+            onClicked: view.settingsRequested()
+        }
     }
     Flow {
         id: selectionFlow

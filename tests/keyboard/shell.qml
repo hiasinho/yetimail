@@ -55,6 +55,9 @@ ShellRoot {
                 mail.loading = false; mail.reading = false; mail.marking = false; mail.moving = false; mail.savingAttachment = false; mail.openingAttachment = false
                 mail.folderId = ""; mail.folderName = "Inbox"; mail.foldersLoading = false; mail.foldersLoaded = false; mail.foldersError = ""
                 widget.showFolders = false
+                widget.showSettings = false
+                mail.accountLabels = ({alpha: "Personal", beta: "Work"})
+                mail.accountOverview = []
                 widget.clearSelection()
                 widget.cursorId = ""
                 mail.actionError = ""
@@ -429,6 +432,65 @@ ShellRoot {
                     check(!widget.showFolders, flag + " prevents moving")
                     mail[flag] = false
                 }
+            }
+            function test_account_settings_and_labels() {
+                var settingsButton = find(widget, function(item) { return item.objectName === "accountSettingsButton" })
+                var folderButton = find(widget, function(item) { return item.objectName === "folderButton" })
+                check(settingsButton !== null, "account settings button found")
+                check(settingsButton.x > folderButton.x, "settings gear follows mailbox controls")
+                var before = mail.calls.length
+                mouseClick(settingsButton, settingsButton.width / 2, settingsButton.height / 2); wait(50)
+                check(widget.showSettings, "gear opens account overview")
+                equal(mail.calls.length, before + 1, "opening settings only requests offline account metadata")
+                equal(mail.calls[mail.calls.length - 1].operation, "accounts")
+                var list = find(widget, function(item) { return item.objectName === "accountSettingsList" })
+                var field = find(widget, function(item) { return item.objectName === "accountLabelField" })
+                var save = find(widget, function(item) { return item.objectName === "saveAccountLabelButton" })
+                var settings = find(widget, function(item) { return item.objectName === "accountSettings" })
+                check(list !== null && field !== null && save !== null && settings !== null, "account overview controls found")
+                equal(list.count, 3, "overview includes configured accounts outside the mail allowlist")
+                var overview = mail.accountOverview
+                mail.accountOverview = []
+                settings.focusAccount("beta")
+                mail.accountOverview = overview
+                wait(30)
+                equal(field.text, "Work", "asynchronous discovery preserves the requested account")
+                settings.focusAccount("alpha")
+                equal(field.text, "Personal", "saved friendly label is editable")
+                var page = mail.page
+                before = mail.calls.length
+                press(Qt.Key_N); press(Qt.Key_R); press(Qt.Key_BracketRight); press(Qt.Key_Delete)
+                equal(mail.calls.length, before, "settings blocks mailbox shortcuts")
+                equal(mail.page, page)
+                field.text = "Home mail"
+                mouseClick(save, save.width / 2, save.height / 2); wait(30)
+                equal(mail.accountLabels.alpha, "Home mail", "saving updates the display label")
+                equal(mail.calls[mail.calls.length - 1].operation, "account-label")
+                equal(mail.calls[mail.calls.length - 1].id, "alpha")
+                equal(mail.calls[mail.calls.length - 1].seen, "Home mail")
+                press(Qt.Key_Escape)
+                check(!widget.showSettings && widget.opened, "Escape returns to mail")
+                widget.settings = ({demo: true, accounts: "", account: ""})
+                mail.accountOverview = [{id: "alpha", label: "Home mail", email: "alpha@example.test", "display-name": "Alpha Sender", default: true, receiving: ["imap"], sending: ["smtp"]}]
+                wait(30)
+                equal(widget.accountDisplayName(mail.accountLabel), "Home mail", "unnamed default account resolves its configured label")
+                widget.settings = ({demo: true, accounts: "alpha,beta", account: "forbidden"})
+                wait(30)
+                mouseClick(find(widget, function(item) { return item.objectName === "accountButton" }), 18, 18); wait(30)
+                check(find(widget, function(item) { return item.text === "Home mail" }) !== null,
+                    "account picker uses the friendly label while retaining account IDs")
+                press(Qt.Key_Escape)
+                widget.settings = ({demo: true, accounts: "constructor,__proto__", account: "constructor"})
+                mail.accountLabels = JSON.parse('{"constructor":"Builder","__proto__":"Prototype"}')
+                wait(30)
+                equal(widget.accountDisplayName("constructor"), "Builder", "inherited JavaScript names remain valid account IDs")
+                mouseClick(find(widget, function(item) { return item.objectName === "accountButton" }), 18, 18); wait(30)
+                check(find(widget, function(item) { return item.text === "Builder" }) !== null
+                    && find(widget, function(item) { return item.text === "Prototype" }) !== null,
+                    "picker uses own label properties for unusual account IDs")
+                press(Qt.Key_Escape)
+                widget.settings = ({demo: true, accounts: "alpha,beta", account: "forbidden"})
+                wait(30)
             }
             function test_folder_navigation() {
                 press(Qt.Key_Return); press(Qt.Key_N)
@@ -851,7 +913,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 25)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 26)
                     console.log("YETIMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

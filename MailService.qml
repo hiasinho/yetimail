@@ -22,7 +22,6 @@ Item {
     property int discoveryGeneration: 0
     property string pendingFolderRole: ""
     property bool foldersReload: false
-
     function loadFolders() {
         if (!ready || !active) return
         if (foldersLoading) {
@@ -212,6 +211,20 @@ Item {
     property string moveDestination: ""
     property var demoSeen: ({})
     property string accountLabel: account || "Default account"
+    property var accountLabels: ({})
+    property var accountOverview: []
+    property bool accountOverviewLoading: false
+    property string accountOverviewError: ""
+    property int accountOverviewRequest: 0
+    property string accountOverviewConfig: ""
+    property bool accountOverviewDemo: false
+    property bool accountLabelsLoading: false
+    property bool accountLabelsReload: false
+    property bool accountOverviewReload: false
+    property bool accountOverviewEnabled: false
+    property bool accountLabelSaving: false
+    property int accountLabelsRequest: 0
+    property string accountLabelId: ""
     // Quickshell's running flips only after launch, so latch requests ourselves.
     property bool loading: false
     property bool reading: false
@@ -246,6 +259,69 @@ Item {
         if (demo) args.push("--demo")
         if (operation !== "folders" && folderId) args.push("--mailbox=" + folderId)
         return args
+    }
+
+    function accountSettingsCommand(operation) {
+        var args = ["python3", decodeURIComponent(Qt.resolvedUrl("bin/yetimail-helper").toString().replace(/^file:\/\//, "")), operation]
+        if (config && operation === "accounts") args.push("--config", config)
+        if (demo) args.push("--demo")
+        return args
+    }
+
+    function withAccountLabel(source, accountId, label) {
+        var entries = []
+        Object.keys(source || ({})).forEach(function(id) {
+            if (id !== accountId) entries.push(JSON.stringify(id) + ":" + JSON.stringify(String(source[id])))
+        })
+        if (label) entries.push(JSON.stringify(accountId) + ":" + JSON.stringify(label))
+        return JSON.parse("{" + entries.join(",") + "}")
+    }
+
+    function loadAccountLabels() {
+        if (!ready || !active) return
+        if (accountLabelsLoading || accountLabelSaving || accountLabelsProcess.running) {
+            accountLabelsReload = true
+            return
+        }
+        accountLabelsReload = false
+        accountLabelsLoading = true
+        accountLabelsProcess.request = ++accountLabelsRequest
+        accountLabelsProcess.contextDemo = demo
+        accountLabelsProcess.command = accountSettingsCommand("account-labels")
+        accountLabelsProcess.running = true
+    }
+
+    function loadAccountOverview() {
+        accountOverviewEnabled = true
+        if (!ready || !active) return
+        if (accountOverviewLoading || accountLabelSaving || accountOverviewProcess.running) {
+            accountOverviewReload = true
+            return
+        }
+        accountOverviewReload = false
+        accountOverviewError = ""
+        accountOverviewLoading = true
+        accountOverviewConfig = config
+        accountOverviewDemo = demo
+        accountOverviewProcess.request = ++accountOverviewRequest
+        accountOverviewProcess.contextConfig = config
+        accountOverviewProcess.contextDemo = demo
+        accountOverviewProcess.command = accountSettingsCommand("accounts")
+        accountOverviewProcess.running = true
+    }
+
+    function saveAccountLabel(accountId, label) {
+        if (!ready || !active || accountOverviewLoading || accountLabelSaving || accountLabelProcess.running
+            || typeof accountId !== "string" || !accountId || typeof label !== "string") return false
+        accountOverviewError = ""
+        accountLabelsLoading = false
+        accountLabelSaving = true
+        accountLabelId = accountId
+        accountLabelProcess.request = ++accountLabelsRequest
+        accountLabelProcess.contextDemo = demo
+        accountLabelProcess.command = accountSettingsCommand("account-label").concat(["--account=" + accountId, "--label=" + label])
+        accountLabelProcess.running = true
+        return true
     }
 
     function messageReadCommand(id) {
@@ -727,9 +803,179 @@ Item {
 
     onActiveChanged: reset()
     onAccountChanged: reset()
-    onConfigChanged: reset()
-    onDemoChanged: reset()
+    onConfigChanged: {
+        accountOverviewRequest++
+        accountOverview = []
+        accountOverviewLoading = false
+        accountOverviewError = ""
+        reset()
+        if (active && accountOverviewEnabled) Qt.callLater(loadAccountOverview)
+    }
+    onDemoChanged: {
+        accountOverviewRequest++
+        accountLabelsRequest++
+        accountOverview = []
+        accountLabels = ({})
+        accountOverviewLoading = false
+        accountLabelsLoading = false
+        accountLabelSaving = false
+        accountOverviewError = ""
+        reset()
+        if (active) {
+            Qt.callLater(loadAccountLabels)
+            if (accountOverviewEnabled) Qt.callLater(loadAccountOverview)
+        }
+    }
 
+    Process {
+        id: accountLabelsProcess
+        property int request: 0
+        property bool contextDemo: false
+        stdout: StdioCollector { id: accountLabelsOutput; waitForEnd: true }
+        stderr: StdioCollector { waitForEnd: true }
+        onRunningChanged: {
+            if (running) return
+            var request = accountLabelsProcess.request
+            Qt.callLater(function() {
+                if (request !== root.accountLabelsRequest || !root.accountLabelsLoading || accountLabelsProcess.running) return
+                root.accountLabelsLoading = false
+                if (root.accountLabelsReload) {
+                    root.accountLabelsReload = false
+                    Qt.callLater(root.loadAccountLabels)
+                }
+            })
+        }
+        onExited: function(code, status) {
+            var request = accountLabelsProcess.request
+            root.accountLabelsLoading = false
+            var reload = root.accountLabelsReload
+            root.accountLabelsReload = false
+            if (request !== root.accountLabelsRequest || accountLabelsProcess.contextDemo !== root.demo) {
+                if (reload) Qt.callLater(root.loadAccountLabels)
+                return
+            }
+            try {
+                var data = root.result(accountLabelsOutput.text, code)
+                if (!data || !data.labels || typeof data.labels !== "object" || Array.isArray(data.labels))
+                    throw new Error("Invalid account labels from mail helper.")
+                Object.keys(data.labels).forEach(function(id) {
+                    if (!id || typeof data.labels[id] !== "string" || !data.labels[id] || data.labels[id].length > 80)
+                        throw new Error("Invalid account labels from mail helper.")
+                })
+                root.accountLabels = data.labels
+            } catch (e) { /* Labels are optional; account IDs remain available. */ }
+            if (reload) Qt.callLater(root.loadAccountLabels)
+        }
+    }
+    Process {
+        id: accountOverviewProcess
+        property int request: 0
+        property string contextConfig: ""
+        property bool contextDemo: false
+        stdout: StdioCollector { id: accountOverviewOutput; waitForEnd: true }
+        stderr: StdioCollector { waitForEnd: true }
+        onRunningChanged: {
+            if (running) return
+            var request = accountOverviewProcess.request
+            Qt.callLater(function() {
+                if (request !== root.accountOverviewRequest || !root.accountOverviewLoading || accountOverviewProcess.running) return
+                root.accountOverviewLoading = false
+                if (root.accountOverviewConfig === root.config && root.accountOverviewDemo === root.demo)
+                    root.accountOverviewError = "Could not launch Python 3 to read account settings."
+                if (root.accountOverviewReload) {
+                    root.accountOverviewReload = false
+                    Qt.callLater(root.loadAccountOverview)
+                }
+            })
+        }
+        onExited: function(code, status) {
+            var request = accountOverviewProcess.request
+            root.accountOverviewLoading = false
+            var reload = root.accountOverviewReload
+            root.accountOverviewReload = false
+            if (request !== root.accountOverviewRequest || accountOverviewProcess.contextConfig !== root.config
+                || accountOverviewProcess.contextDemo !== root.demo) {
+                if (reload) Qt.callLater(root.loadAccountOverview)
+                return
+            }
+            try {
+                var data = root.result(accountOverviewOutput.text, code)
+                if (!data || !Array.isArray(data.accounts)) throw new Error("Invalid account overview from mail helper.")
+                var labels = JSON.parse(JSON.stringify(root.accountLabels || ({})))
+                data.accounts.forEach(function(item) {
+                    if (!item || typeof item.id !== "string" || !item.id || typeof item.label !== "string"
+                        || typeof item.email !== "string" || typeof item["display-name"] !== "string"
+                        || typeof item.default !== "boolean" || !Array.isArray(item.receiving) || !Array.isArray(item.sending)
+                        || item.receiving.some(function(value) { return typeof value !== "string" })
+                        || item.sending.some(function(value) { return typeof value !== "string" }))
+                        throw new Error("Invalid account overview from mail helper.")
+                    labels = root.withAccountLabel(labels, item.id, item.label)
+                })
+                root.accountLabels = labels
+                root.accountOverview = data.accounts
+            } catch (e) { root.accountOverviewError = e.message }
+            if (reload) Qt.callLater(root.loadAccountOverview)
+        }
+    }
+    Process {
+        id: accountLabelProcess
+        property int request: 0
+        property bool contextDemo: false
+        stdout: StdioCollector { id: accountLabelOutput; waitForEnd: true }
+        stderr: StdioCollector { waitForEnd: true }
+        onRunningChanged: {
+            if (running) return
+            var request = accountLabelProcess.request
+            Qt.callLater(function() {
+                if (request !== root.accountLabelsRequest || !root.accountLabelSaving || accountLabelProcess.running) return
+                root.accountLabelSaving = false
+                root.accountOverviewError = "Could not launch Python 3 to save the account label."
+                if (root.accountLabelsReload) {
+                    root.accountLabelsReload = false
+                    Qt.callLater(root.loadAccountLabels)
+                }
+                if (root.accountOverviewReload) {
+                    root.accountOverviewReload = false
+                    Qt.callLater(root.loadAccountOverview)
+                }
+            })
+        }
+        onExited: function(code, status) {
+            var request = accountLabelProcess.request
+            root.accountLabelSaving = false
+            if (request !== root.accountLabelsRequest || accountLabelProcess.contextDemo !== root.demo) {
+                if (root.accountLabelsReload) {
+                    root.accountLabelsReload = false
+                    Qt.callLater(root.loadAccountLabels)
+                }
+                if (root.accountOverviewReload) {
+                    root.accountOverviewReload = false
+                    Qt.callLater(root.loadAccountOverview)
+                }
+                return
+            }
+            try {
+                var data = root.result(accountLabelOutput.text, code)
+                if (!data || data.id !== root.accountLabelId || typeof data.label !== "string" || data.label.length > 80)
+                    throw new Error("Invalid account label response from mail helper.")
+                root.accountLabels = root.withAccountLabel(root.accountLabels, data.id, data.label)
+                root.accountOverview = root.accountOverview.map(function(item) {
+                    if (item.id !== data.id) return item
+                    var updated = Object.assign({}, item)
+                    updated.label = data.label
+                    return updated
+                })
+            } catch (e) { root.accountOverviewError = e.message }
+            if (root.accountLabelsReload) {
+                root.accountLabelsReload = false
+                Qt.callLater(root.loadAccountLabels)
+            }
+            if (root.accountOverviewReload) {
+                root.accountOverviewReload = false
+                Qt.callLater(root.loadAccountOverview)
+            }
+        }
+    }
     Process {
         id: foldersProcess
         stdout: StdioCollector { id: foldersOutput; waitForEnd: true }

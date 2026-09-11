@@ -9,6 +9,7 @@ Rectangle {
     required property int currentIndex
     required property bool switchingBlocked
     required property var accounts
+    required property var labels
     required property string currentAccount
     signal accountChosen(int index)
     function focusList() { accountList.forceActiveFocus() }
@@ -40,7 +41,14 @@ Rectangle {
                 anchors.leftMargin: 8
                 anchors.rightMargin: 8
                 spacing: 8
-                MailLabel { Layout.fillWidth: true; text: String(modelData); elide: Text.ElideRight }
+                MailLabel {
+                    Layout.fillWidth: true
+                    text: {
+                        var id = String(modelData)
+                        return String(Object.prototype.hasOwnProperty.call(view.labels, id) ? view.labels[id] : id)
+                    }
+                    elide: Text.ElideRight
+                }
             }
             MouseArea {
                 anchors.fill: parent

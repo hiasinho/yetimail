@@ -64,10 +64,24 @@ ShellRoot {
         running: Quickshell.env("YETIMAIL_INTERACTIVE") !== "1"
         repeat: true
         property bool requested: false
+        property bool overviewRequested: false
+        property bool labelRequested: false
         onTriggered: {
-            if (probe.listError || probe.readError) { console.error("SMOKE FAILED: " + probe.listError + probe.readError); Qt.quit() }
+            if (probe.listError || probe.readError || probe.accountOverviewError) {
+                console.error("SMOKE FAILED: " + probe.listError + probe.readError + probe.accountOverviewError)
+                Qt.quit()
+            }
             if (!requested && probe.messages.length) { requested = true; probe.readMessage(probe.messages[0].id) }
-            if (probe.message) { console.log("YETIMAIL_SMOKE_OK"); Qt.quit() }
+            if (probe.message && !overviewRequested) { overviewRequested = true; probe.loadAccountOverview() }
+            if (probe.accountOverview.length && !labelRequested) {
+                labelRequested = true
+                probe.saveAccountLabel("constructor", "Demo label")
+            }
+            if (probe.message && Object.prototype.hasOwnProperty.call(probe.accountLabels, "constructor")
+                    && probe.accountLabels["constructor"] === "Demo label") {
+                console.log("YETIMAIL_SMOKE_OK")
+                Qt.quit()
+            }
         }
     }
     Timer { interval: 10000; running: Quickshell.env("YETIMAIL_INTERACTIVE") !== "1"; onTriggered: { console.error("SMOKE TIMEOUT"); Qt.quit() } }

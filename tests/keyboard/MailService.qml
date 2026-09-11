@@ -9,6 +9,34 @@ Item {
     onConfigChanged: { generation++; foldersLoaded = false }
     property bool demo: false
     readonly property string accountLabel: account || "Fixture"
+    property var accountLabels: ({alpha: "Personal", beta: "Work"})
+    property var accountOverview: []
+    property bool accountOverviewLoading: false
+    property string accountOverviewError: ""
+    property bool accountLabelSaving: false
+    function loadAccountLabels() {}
+    function loadAccountOverview() {
+        record("accounts")
+        accountOverview = [
+            {id: "alpha", label: accountLabels.alpha || "", email: "alpha@example.test", "display-name": "Alpha Sender", default: true, receiving: ["imap"], sending: ["smtp"]},
+            {id: "beta", label: accountLabels.beta || "", email: "beta@example.test", "display-name": "Beta Sender", default: false, receiving: ["jmap"], sending: ["jmap"]},
+            {id: "configured-only", label: "", email: "extra@example.test", "display-name": "Extra Sender", default: false, receiving: ["imap"], sending: []}
+        ]
+    }
+    function saveAccountLabel(id, label) {
+        record("account-label", id, label)
+        var updatedLabels = Object.assign({}, accountLabels)
+        if (label) updatedLabels[id] = label
+        else delete updatedLabels[id]
+        accountLabels = updatedLabels
+        accountOverview = accountOverview.map(function(item) {
+            if (item.id !== id) return item
+            var updated = Object.assign({}, item)
+            updated.label = label
+            return updated
+        })
+        return true
+    }
     property string folderId: ""
     property string folderName: "Inbox"
     property bool foldersLoading: false

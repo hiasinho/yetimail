@@ -260,13 +260,16 @@ for scenario in widget accounts race missing unlaunchable; do
        grep -Eq 'FORBIDDEN|BAD ARGUMENT' "$YETIMAIL_CALLS"; then status=1; fi
     case "$scenario" in
         widget)
-            if [[ $(wc -l < "$YETIMAIL_CALLS") != 1 ]] ||
+            if [[ $(wc -l < "$YETIMAIL_CALLS") != 4 ]] ||
+               ! grep -qx 'account-labels account=default config=none demo=true id=none' "$YETIMAIL_CALLS" ||
+               ! grep -qx 'accounts account=default config=none demo=true id=none' "$YETIMAIL_CALLS" ||
+               ! grep -qx 'accounts account=default config=widget-config demo=true id=none' "$YETIMAIL_CALLS" ||
                ! grep -qx 'list account=widget config=widget-config demo=true id=none' "$YETIMAIL_CALLS"; then
                 echo 'LIFECYCLE_FAIL widget: unexpected launch count or non-demo invocation'; status=1
             fi ;;
         accounts)
-            if [[ $(wc -l < "$YETIMAIL_CALLS") != 3 ]] ||
-               grep -Evq '^(list|read) account=(hiash|hiasinho) config=accounts-config demo=true id=' "$YETIMAIL_CALLS" ||
+            if [[ $(wc -l < "$YETIMAIL_CALLS") != 6 ]] ||
+               grep -Evq '^(account-labels account=default config=none demo=true id=none|accounts account=default config=(none|accounts-config) demo=true id=none|(list|read) account=(hiash|hiasinho) config=accounts-config demo=true id=)' "$YETIMAIL_CALLS" ||
                ! grep -qx 'list account=hiash config=accounts-config demo=true id=none' "$YETIMAIL_CALLS" ||
                ! grep -qx 'read account=hiash config=accounts-config demo=true id=hiash/accounts-config' "$YETIMAIL_CALLS" ||
                ! grep -qx 'list account=hiasinho config=accounts-config demo=true id=none' "$YETIMAIL_CALLS"; then

@@ -6,7 +6,8 @@ import qs.Commons
 
 Button {
     fontFamily: Style.font.family
-    fontSize: 11
+    fontSize: Style.font.bodySmall
+    iconSize: Style.font.icon
     horizontalPadding: 6
     verticalPadding: 4
     radius: 0

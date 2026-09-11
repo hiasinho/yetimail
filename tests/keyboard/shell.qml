@@ -64,6 +64,18 @@ ShellRoot {
                 widget.focusList()
                 wait(50)
             }
+            function test_filled_material_icons() {
+                equal(widget.icons.mail, "󰇮")
+                equal(widget.icons.inbox, "󰻪")
+                equal(widget.icons.drafts, "󰷈")
+                equal(widget.icons.archive, "󰀼")
+                equal(widget.icons.junk, "󰯈")
+                equal(widget.icons.trash, "󰩹")
+                equal(widget.icons.folder, "󰉋")
+                equal(widget.icons.attachment, "󰁦")
+                equal(widget.icons.delete, "󰆴")
+                equal(widget.icons.agent, "󰙴")
+            }
             function test_presentation_lifetime() {
                 press(Qt.Key_Return)
                 var originalBody = area
@@ -808,7 +820,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 24)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 25)
                     console.log("YETIMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

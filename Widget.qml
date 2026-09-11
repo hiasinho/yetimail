@@ -12,17 +12,17 @@ BarWidget {
     implicitWidth: button.implicitWidth
     implicitHeight: button.implicitHeight
     property bool opened: false
-    // Material Design icons bundled with Omarchy's Nerd Font.
+    // Filled Material Design icons bundled with Omarchy's Nerd Font.
     readonly property var icons: ({
-        mail: "󰇰",
-        inbox: "󰚇",
+        mail: "󰇮",
+        inbox: "󰻪",
         sent: "󰒊",
-        drafts: "󰷉",
-        archive: "󱈎",
-        junk: "󰀪",
-        trash: "󰩺",
-        folder: "󰉖",
-        attachment: "󰏢",
+        drafts: "󰷈",
+        archive: "󰀼",
+        junk: "󰯈",
+        trash: "󰩹",
+        folder: "󰉋",
+        attachment: "󰁦",
         headers: "󰷐",
         link: "󰏌",
         read: "󰄬",
@@ -31,8 +31,8 @@ BarWidget {
         previous: "󰅁",
         next: "󰅂",
         refresh: "󰑐",
-        delete: "󰧧",
-        agent: "󰚩"
+        delete: "󰆴",
+        agent: "󰙴"
     })
     // An explicit allowlist avoids discovering/querying unrelated accounts.
     readonly property var accounts: String(setting("accounts", "")).split(",").map(function(name) {

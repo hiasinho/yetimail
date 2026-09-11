@@ -51,6 +51,7 @@ ShellRoot {
             }
             function init() {
                 widget.selectedAccount = "alpha"
+                widget.cancelDelete(); mail.deleting = false
                 mail.loading = false; mail.reading = false; mail.marking = false; mail.moving = false; mail.savingAttachment = false; mail.openingAttachment = false
                 mail.folderId = ""; mail.folderName = "Inbox"; mail.foldersLoading = false; mail.foldersError = ""
                 widget.showFolders = false
@@ -60,6 +61,113 @@ ShellRoot {
                 widget.showHelp = false
                 widget.focusList()
                 wait(50)
+            }
+            function test_delete_confirmation() {
+                press(Qt.Key_J); press(Qt.Key_Delete)
+                check(widget.confirmingDelete, "Delete always asks")
+                equal(widget.deleteSnapshot.id, "alpha/2")
+                equal(widget.deleteSnapshot.account, "alpha")
+                equal(widget.deleteSnapshot.folder, "")
+                equal(widget.deleteSnapshot.subject, "Fixture 2")
+                for (var key of [Qt.Key_J, Qt.Key_K, Qt.Key_L, Qt.Key_Right, Qt.Key_Left,
+                        Qt.Key_F, Qt.Key_O, Qt.Key_V, Qt.Key_A, Qt.Key_S, Qt.Key_M, Qt.Key_U,
+                        Qt.Key_N, Qt.Key_P, Qt.Key_R, Qt.Key_Tab, Qt.Key_BracketRight,
+                        Qt.Key_BracketLeft, Qt.Key_Question, Qt.Key_Q, Qt.Key_Delete, Qt.Key_Space]) press(key)
+                press(Qt.Key_M, Qt.ShiftModifier); press(Qt.Key_D, Qt.ControlModifier)
+                press(Qt.Key_G); press(Qt.Key_T)
+                equal(mail.calls.length, 0, "all other modal shortcuts blocked")
+                equal(widget.cursorId, "alpha/2")
+                check(widget.confirmingDelete && widget.opened)
+                press(Qt.Key_H)
+                check(!widget.confirmingDelete && widget.opened)
+                press(Qt.Key_Delete); press(Qt.Key_Escape)
+                equal(mail.calls.length, 0, "cancellation is inert")
+                press(Qt.Key_Delete)
+                var cancel = find(widget, function(item) { return item.objectName === "cancelDelete" })
+                mouseClick(cancel, cancel.width / 2, cancel.height / 2); wait(30)
+                check(!widget.confirmingDelete)
+                equal(mail.calls.length, 0, "Cancel button is inert")
+                press(Qt.Key_Delete); press(Qt.Key_Return)
+                equal(mail.calls.length, 1)
+                equal(mail.calls[0].operation, "delete")
+                equal(mail.calls[0].id, "alpha/2")
+                equal(widget.cursorId, "alpha/3", "next row preserved")
+                widget.confirmDelete()
+                equal(mail.calls.length, 1, "duplicate confirmation is inert")
+                press(Qt.Key_Return)
+                widget.cursorId = "alpha/4"
+                var button = find(widget, function(item) { return item.objectName === "readerDelete" })
+                mouseClick(button, button.width / 2, button.height / 2); wait(30)
+                check(widget.confirmingDelete, "toolbar always asks")
+                equal(widget.deleteSnapshot.id, "alpha/3", "toolbar targets displayed message")
+                var confirm = find(widget, function(item) { return item.objectName === "confirmDelete" })
+                mouseClick(confirm, confirm.width / 2, confirm.height / 2); wait(30)
+                equal(mail.calls[mail.calls.length - 1].id, "alpha/3")
+                equal(mail.selectedId, ""); equal(mail.message, null)
+            }
+            function test_delete_cancel_restores_focus() {
+                press(Qt.Key_Return)
+                check(area.activeFocus, "reader starts focused")
+                var calls = mail.calls.length
+                var cancel = find(widget, function(item) { return item.objectName === "cancelDelete" })
+                for (var action of ["h", "escape", "button"]) {
+                    press(Qt.Key_Delete)
+                    check(widget.confirmingDelete && !area.activeFocus, "confirmation owns focus")
+                    if (action === "h") press(Qt.Key_H)
+                    else if (action === "escape") press(Qt.Key_Escape)
+                    else { mouseClick(cancel, cancel.width / 2, cancel.height / 2); wait(30) }
+                    check(!widget.confirmingDelete && widget.opened, action + " dismisses only confirmation")
+                    equal(widget.pane, "reader")
+                    check(area.activeFocus, action + " restores reader TextArea focus")
+                    // Native TextArea handling, not a Jitsmail Shortcut, must work.
+                    press(Qt.Key_A, Qt.ControlModifier)
+                    check(area.selectedText.length > 0, action + " restores native text selection")
+                    area.deselect()
+                    equal(mail.calls.length, calls, "cancellation never invokes backend")
+                }
+                press(Qt.Key_Delete)
+                mail.generation++
+                check(!widget.confirmingDelete && !area.activeFocus, "state reset does not force reader focus")
+                area.forceActiveFocus()
+                press(Qt.Key_Delete)
+                widget.close()
+                check(!widget.confirmingDelete && !area.activeFocus, "closing does not restore reader focus")
+            }
+            function test_delete_stale_and_busy() {
+                for (var flag of ["loading", "reading", "marking", "moving", "deleting", "savingAttachment", "openingAttachment"]) {
+                    mail[flag] = true
+                    press(Qt.Key_Delete)
+                    check(!widget.confirmingDelete, flag + " blocks prompt")
+                    mail[flag] = false
+                    widget.requestDelete(widget.targetId)
+                    check(widget.confirmingDelete)
+                    mail[flag] = true
+                    check(!widget.confirmingDelete, flag + " clears existing prompt")
+                    widget.confirmDelete()
+                    equal(mail.calls.length, 0, "busy changes cannot submit")
+                    mail[flag] = false
+                }
+                var mutations = [function() { widget.close() }, function() { mail.generation++ },
+                    function() { mail.folderId = "Trash" }, function() { widget.selectedAccount = "beta" },
+                    function() { widget.cursorId = "alpha/9" }, function() { mail.loading = true },
+                    function() { mail.messages = mail.messages.slice() }, function() { mail.readRequest++ },
+                    function() { mail.listRequest++ }, function() { mail.page++ },
+                    function() { mail.config += "changed" }, function() { widget.pane = "reader" },
+                    function() { mail.messages = mail.messages.map(function(row) {
+                        return Object.assign({}, row, {subject: "changed"}) }) }]
+                for (var mutate of mutations) {
+                    init()
+                    widget.requestDelete(widget.targetId)
+                    check(widget.confirmingDelete)
+                    var stale = widget.deleteSnapshot
+                    mutate()
+                    check(!widget.confirmingDelete, "state change clears prompt")
+                    // Even if a stale UI snapshot survives notification delivery,
+                    // confirmation must revalidate rather than retarget.
+                    widget.deleteSnapshot = stale
+                    widget.confirmDelete()
+                    equal(mail.calls.filter(function(c) { return c.operation === "delete" }).length, 0, "stale snapshot never deletes")
+                }
             }
             function test_move_picker() {
                 mail.folderId = "INBOX"
@@ -457,7 +565,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 14)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 17)
                     console.log("JITSMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

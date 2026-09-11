@@ -29,7 +29,48 @@ BarWidget {
     property bool movePicker: false
     property string moveTargetId: ""
     property string moveNextId: ""
-    readonly property bool switchingBlocked: mail.moving || mail.marking || mail.savingAttachment || mail.openingAttachment
+    property var deleteSnapshot: null
+    readonly property bool confirmingDelete: deleteSnapshot !== null
+    function requestDelete(id) {
+        if (!opened || busy || confirmingDelete || showHelp || showFolders) return
+        var envelope = mail.messages.find(function(m) { return m.id === id })
+        if (!envelope) return
+        deleteSnapshot = {account: mail.account, folder: mail.folderId, folderName: mail.folderName,
+            id: id, subject: envelope.subject || "(No subject)", generation: mail.generation,
+            page: mail.page, listRequest: mail.listRequest, readRequest: mail.readRequest,
+            target: targetId, pane: pane, messages: mail.messages}
+        deleteOverlay.forceActiveFocus()
+    }
+    function cancelDelete(restoreFocus) {
+        var snapshot = deleteSnapshot
+        deleteSnapshot = null
+        // State invalidation must not steal focus from the new context.
+        if (restoreFocus !== false && snapshot && opened && snapshot.pane === pane) {
+            if (pane === "reader") {
+                if (showLinks) linkList.forceActiveFocus()
+                else messageText.forceActiveFocus()
+            } else inbox.forceActiveFocus()
+        }
+    }
+    function confirmDelete() {
+        var snapshot = deleteSnapshot
+        // Consume before submitting: held Enter and double clicks cannot repeat.
+        cancelDelete()
+        if (!snapshot || !opened || busy || snapshot.account !== mail.account
+            || snapshot.folder !== mail.folderId || snapshot.generation !== mail.generation
+            || snapshot.page !== mail.page || snapshot.listRequest !== mail.listRequest
+            || snapshot.readRequest !== mail.readRequest || snapshot.target !== targetId || snapshot.pane !== pane
+            || snapshot.messages !== mail.messages) return
+        var index = mail.messages.findIndex(function(m) { return m.id === snapshot.id
+            && (m.subject || "(No subject)") === snapshot.subject })
+        if (index < 0) return
+        var next = mail.messages[index + 1] || mail.messages[index - 1]
+        moveNextId = next ? next.id : ""
+        if (!mail.deleteMessage(snapshot.id)) moveNextId = ""
+    }
+    onTargetIdChanged: cancelDelete(false)
+    onPaneChanged: cancelDelete(false)
+    readonly property bool switchingBlocked: confirmingDelete || mail.deleting || mail.moving || mail.marking || mail.savingAttachment || mail.openingAttachment
     function toggleFolders() {
         if (switchingBlocked) return
         if (showFolders) { dismissFolders(); return }
@@ -104,6 +145,7 @@ BarWidget {
         mail.selectFolderRole(role)
     }
     function toggleHelp() {
+        if (confirmingDelete) return
         if (showFolders) dismissFolders()
         showHelp = !showHelp
     }
@@ -212,7 +254,7 @@ BarWidget {
     readonly property string targetId: pane === "reader" ? mail.selectedId : cursorId
     readonly property var targetEnvelope: mail.messages.find(function(m) { return m.id === root.targetId }) || null
     readonly property var displayedEnvelope: mail.messages.find(function(m) { return m.id === mail.selectedId }) || null
-    readonly property bool busy: mail.moving || mail.loading || mail.reading || mail.marking || mail.savingAttachment || mail.openingAttachment
+    readonly property bool busy: mail.deleting || mail.moving || mail.loading || mail.reading || mail.marking || mail.savingAttachment || mail.openingAttachment
 
     function selectAccount(name) {
         if (accounts.indexOf(name) !== -1 && !switchingBlocked && !showHelp) selectedAccount = name
@@ -297,8 +339,9 @@ BarWidget {
         else if (pane === "reader") back()
         else close()
     }
-    onCurrentAccountChanged: { moveNextId = ""; moveTargetId = ""; movePicker = false; cursorId = ""; pane = "list"; showHelp = false; showFolders = false; showLinks = false; showHeaders = false; showAttachments = false }
+    onCurrentAccountChanged: { cancelDelete(false); moveNextId = ""; moveTargetId = ""; movePicker = false; cursorId = ""; pane = "list"; showHelp = false; showFolders = false; showLinks = false; showHeaders = false; showAttachments = false }
     onOpenedChanged: {
+        cancelDelete(false)
         if (opened) { showHelp = false; Qt.callLater(focusList) }
         else { showFolders = false; showHelp = false; mail.cancelAttachmentOpen() }
     }
@@ -313,20 +356,31 @@ BarWidget {
     Connections {
         target: mail
         function onGenerationChanged() {
+            root.cancelDelete(false)
             if (root.showFolders && root.movePicker) root.dismissFolders()
             root.moveNextId = ""
         }
-        function onMessagesChanged() { root.syncCursor() }
+        function onMessagesChanged() { root.cancelDelete(false); root.syncCursor() }
+        function onLoadingChanged() { if (mail.loading) root.cancelDelete(false) }
+        function onReadingChanged() { if (mail.reading) root.cancelDelete(false) }
+        function onPageChanged() { root.cancelDelete(false) }
+        function onListRequestChanged() { root.cancelDelete(false) }
+        function onReadRequestChanged() { root.cancelDelete(false) }
+        function onMarkingChanged() { if (mail.marking) root.cancelDelete(false) }
+        function onMovingChanged() { if (mail.moving) root.cancelDelete(false) }
+        function onDeletingChanged() { if (mail.deleting) root.cancelDelete(false) }
+        function onSavingAttachmentChanged() { if (mail.savingAttachment) root.cancelDelete(false) }
+        function onOpeningAttachmentChanged() { if (mail.openingAttachment) root.cancelDelete(false) }
         function onFoldersChanged() { root.syncFolderCursor() }
-        function onFolderIdChanged() { root.showFolders = false; root.movePicker = false; root.moveTargetId = ""; root.moveNextId = ""; root.cursorId = ""; root.pane = "list"; root.showLinks = false; root.showHeaders = false; root.showAttachments = false }
-        function onMessageChanged() { root.showLinks = false; root.showHeaders = false; root.showAttachments = false; root.linkIndex = 0; root.attachmentIndex = 0 }
-        function onSelectedIdChanged() { if (!mail.selectedId) root.pane = "list" }
+        function onFolderIdChanged() { root.cancelDelete(false); root.showFolders = false; root.movePicker = false; root.moveTargetId = ""; root.moveNextId = ""; root.cursorId = ""; root.pane = "list"; root.showLinks = false; root.showHeaders = false; root.showAttachments = false }
+        function onMessageChanged() { root.cancelDelete(false); root.showLinks = false; root.showHeaders = false; root.showAttachments = false; root.linkIndex = 0; root.attachmentIndex = 0 }
+        function onSelectedIdChanged() { root.cancelDelete(false); if (!mail.selectedId) root.pane = "list" }
     }
     Timer {
         interval: Math.max(30, Number(root.setting("refreshSeconds", 120)) || 120) * 1000
         running: true
         repeat: true
-        onTriggered: mail.refresh()
+        onTriggered: if (!root.confirmingDelete) mail.refresh()
     }
     WidgetButton {
         id: button
@@ -351,42 +405,46 @@ BarWidget {
             anchors.fill: parent
             // Window shortcuts also work when the selectable message TextArea
             // or a header button owns focus; they don't depend on key bubbling.
-            Shortcut { sequences: ["J", "Down"]; enabled: root.opened; onActivated: root.navigate(1) }
-            Shortcut { sequences: ["K", "Up"]; enabled: root.opened; onActivated: root.navigate(-1) }
-            Shortcut { sequences: ["Return", "Enter"]; autoRepeat: false; enabled: root.opened && !root.showHelp && (root.showFolders || root.pane === "list"); onActivated: root.showFolders ? root.chooseFolder() : root.openCurrent() }
-            Shortcut { sequences: ["L", "Right"]; enabled: root.opened && !root.showHelp && !(root.showFolders && root.movePicker) && (root.showFolders || root.pane === "list"); onActivated: root.showFolders ? root.chooseFolder() : root.openCurrent() }
-            Shortcut { sequence: "F"; enabled: root.opened; onActivated: root.toggleFolders() }
-            Shortcut { sequence: "G, I"; enabled: root.opened; onActivated: root.goFolderRole("inbox") }
-            Shortcut { sequence: "G, S"; enabled: root.opened; onActivated: root.goFolderRole("sent") }
-            Shortcut { sequence: "G, A"; enabled: root.opened; onActivated: root.goFolderRole("archive") }
-            Shortcut { sequence: "G, T"; enabled: root.opened; onActivated: root.goFolderRole("trash") }
-            Shortcut { sequences: ["H", "Left"]; enabled: root.opened; onActivated: root.back() }
-            Shortcut { sequence: "O"; enabled: root.opened; onActivated: root.toggleLinks() }
-            Shortcut { sequence: "V"; enabled: root.opened; onActivated: root.toggleHeaders() }
-            Shortcut { sequence: "A"; enabled: root.opened; onActivated: root.toggleAttachments() }
-            Shortcut { sequence: "S"; autoRepeat: false; enabled: root.opened && root.showAttachments; onActivated: root.attachmentAction(false) }
-            Shortcut { sequences: ["Return", "Enter"]; autoRepeat: false; enabled: root.opened && root.showAttachments; onActivated: root.attachmentAction(true) }
-            Shortcut { sequences: ["Return", "Enter", "L", "Right"]; enabled: root.opened && root.showLinks; autoRepeat: false; onActivated: root.openLink() }
-            Shortcut { sequence: "G, G"; enabled: root.opened; onActivated: root.jump(false) }
-            Shortcut { sequence: "Shift+G"; enabled: root.opened; onActivated: root.jump(true) }
-            Shortcut { sequence: "Ctrl+D"; enabled: root.opened; onActivated: root.halfPage(1) }
-            Shortcut { sequence: "Ctrl+U"; enabled: root.opened; onActivated: root.halfPage(-1) }
-            Shortcut { sequences: ["Tab", "Shift+Tab"]; enabled: root.opened; onActivated: root.switchPane() }
-            Shortcut { sequence: "N"; enabled: root.opened && !root.busy && !root.showFolders && !root.showHelp; onActivated: mail.nextPage() }
-            Shortcut { sequence: "P"; enabled: root.opened && !root.busy && !root.showFolders && !root.showHelp; onActivated: mail.previousPage() }
-            Shortcut { sequence: "["; enabled: root.opened; onActivated: root.moveAccount(-1) }
-            Shortcut { sequence: "]"; enabled: root.opened; onActivated: root.moveAccount(1) }
-            Shortcut { sequence: "Shift+M"; autoRepeat: false; enabled: root.opened; onActivated: root.openMovePicker() }
-            Shortcut { sequence: "M"; autoRepeat: false; enabled: root.opened; onActivated: root.markCurrent(true) }
-            Shortcut { sequence: "U"; autoRepeat: false; enabled: root.opened; onActivated: root.markCurrent(false) }
-            Shortcut { sequences: ["R", "Ctrl+R"]; enabled: root.opened && !root.showHelp; onActivated: { if (root.showFolders) { if (!mail.foldersLoading && !root.switchingBlocked) mail.loadFolders() } else mail.refresh() } }
-            Shortcut { sequence: "?"; enabled: root.opened; onActivated: root.toggleHelp() }
-            Shortcut { sequence: "Escape"; enabled: root.opened; onActivated: root.handleEscape() }
-            Shortcut { sequence: "Q"; enabled: root.opened; onActivated: root.close() }
+            Shortcut { sequences: ["J", "Down"]; enabled: root.opened && !root.confirmingDelete; onActivated: root.navigate(1) }
+            Shortcut { sequences: ["K", "Up"]; enabled: root.opened && !root.confirmingDelete; onActivated: root.navigate(-1) }
+            Shortcut { sequences: ["Return", "Enter"]; autoRepeat: false; enabled: root.opened && !root.confirmingDelete && !root.showHelp && (root.showFolders || root.pane === "list"); onActivated: root.showFolders ? root.chooseFolder() : root.openCurrent() }
+            Shortcut { sequences: ["L", "Right"]; enabled: root.opened && !root.confirmingDelete && !root.showHelp && !(root.showFolders && root.movePicker) && (root.showFolders || root.pane === "list"); onActivated: root.showFolders ? root.chooseFolder() : root.openCurrent() }
+            Shortcut { sequence: "F"; enabled: root.opened && !root.confirmingDelete; onActivated: root.toggleFolders() }
+            Shortcut { sequence: "G, I"; enabled: root.opened && !root.confirmingDelete; onActivated: root.goFolderRole("inbox") }
+            Shortcut { sequence: "G, S"; enabled: root.opened && !root.confirmingDelete; onActivated: root.goFolderRole("sent") }
+            Shortcut { sequence: "G, A"; enabled: root.opened && !root.confirmingDelete; onActivated: root.goFolderRole("archive") }
+            Shortcut { sequence: "G, T"; enabled: root.opened && !root.confirmingDelete; onActivated: root.goFolderRole("trash") }
+            Shortcut { sequences: ["H", "Left"]; enabled: root.opened && !root.confirmingDelete; onActivated: root.back() }
+            Shortcut { sequence: "O"; enabled: root.opened && !root.confirmingDelete; onActivated: root.toggleLinks() }
+            Shortcut { sequence: "V"; enabled: root.opened && !root.confirmingDelete; onActivated: root.toggleHeaders() }
+            Shortcut { sequence: "A"; enabled: root.opened && !root.confirmingDelete; onActivated: root.toggleAttachments() }
+            Shortcut { sequence: "S"; autoRepeat: false; enabled: root.opened && !root.confirmingDelete && root.showAttachments; onActivated: root.attachmentAction(false) }
+            Shortcut { sequences: ["Return", "Enter"]; autoRepeat: false; enabled: root.opened && !root.confirmingDelete && root.showAttachments; onActivated: root.attachmentAction(true) }
+            Shortcut { sequences: ["Return", "Enter", "L", "Right"]; enabled: root.opened && !root.confirmingDelete && root.showLinks; autoRepeat: false; onActivated: root.openLink() }
+            Shortcut { sequence: "G, G"; enabled: root.opened && !root.confirmingDelete; onActivated: root.jump(false) }
+            Shortcut { sequence: "Shift+G"; enabled: root.opened && !root.confirmingDelete; onActivated: root.jump(true) }
+            Shortcut { sequence: "Ctrl+D"; enabled: root.opened && !root.confirmingDelete; onActivated: root.halfPage(1) }
+            Shortcut { sequence: "Ctrl+U"; enabled: root.opened && !root.confirmingDelete; onActivated: root.halfPage(-1) }
+            Shortcut { sequences: ["Tab", "Shift+Tab"]; enabled: root.opened && !root.confirmingDelete; onActivated: root.switchPane() }
+            Shortcut { sequence: "N"; enabled: root.opened && !root.confirmingDelete && !root.busy && !root.showFolders && !root.showHelp; onActivated: mail.nextPage() }
+            Shortcut { sequence: "P"; enabled: root.opened && !root.confirmingDelete && !root.busy && !root.showFolders && !root.showHelp; onActivated: mail.previousPage() }
+            Shortcut { sequence: "["; enabled: root.opened && !root.confirmingDelete; onActivated: root.moveAccount(-1) }
+            Shortcut { sequence: "]"; enabled: root.opened && !root.confirmingDelete; onActivated: root.moveAccount(1) }
+            Shortcut { sequence: "Shift+M"; autoRepeat: false; enabled: root.opened && !root.confirmingDelete; onActivated: root.openMovePicker() }
+            Shortcut { sequence: "M"; autoRepeat: false; enabled: root.opened && !root.confirmingDelete; onActivated: root.markCurrent(true) }
+            Shortcut { sequence: "U"; autoRepeat: false; enabled: root.opened && !root.confirmingDelete; onActivated: root.markCurrent(false) }
+            Shortcut { sequences: ["R", "Ctrl+R"]; enabled: root.opened && !root.confirmingDelete && !root.showHelp; onActivated: { if (root.showFolders) { if (!mail.foldersLoading && !root.switchingBlocked) mail.loadFolders() } else mail.refresh() } }
+            Shortcut { sequence: "?"; enabled: root.opened && !root.confirmingDelete; onActivated: root.toggleHelp() }
+            Shortcut { sequence: "Escape"; enabled: root.opened && !root.confirmingDelete; onActivated: root.handleEscape() }
+            Shortcut { sequence: "Q"; enabled: root.opened && !root.confirmingDelete; onActivated: root.close() }
+
+            Shortcut { sequence: "Delete"; autoRepeat: false; enabled: root.opened && !root.confirmingDelete && !root.busy; onActivated: root.requestDelete(root.targetId) }
+            Shortcut { sequences: ["Return", "Enter"]; autoRepeat: false; enabled: root.opened && root.confirmingDelete; onActivated: root.confirmDelete() }
+            Shortcut { sequences: ["H", "Escape"]; autoRepeat: false; enabled: root.opened && root.confirmingDelete; onActivated: root.cancelDelete() }
 
             RowLayout {
                 anchors.fill: parent
-                enabled: !root.showFolders && !root.showHelp
+                enabled: !root.confirmingDelete && !root.showFolders && !root.showHelp
                 spacing: 16
                 ColumnLayout {
                     id: sidebar
@@ -499,7 +557,7 @@ BarWidget {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            MailLabel { Layout.fillWidth: true; text: mail.moving ? "Moving…" : mail.marking ? "Updating…" : mail.loading ? "Refreshing…" : mail.listError ? "Refresh failed · stale" : mail.messages.length + " messages on page"; opacity: 0.55; font.pixelSize: 10; elide: Text.ElideRight }
+                            MailLabel { Layout.fillWidth: true; text: mail.deleting ? "Deleting…" : mail.moving ? "Moving…" : mail.marking ? "Updating…" : mail.loading ? "Refreshing…" : mail.listError ? "Refresh failed · stale" : mail.messages.length + " messages on page"; opacity: 0.55; font.pixelSize: 10; elide: Text.ElideRight }
                             MailButton { text: "Shortcuts ?"; selected: root.showHelp; onClicked: root.toggleHelp() }
                         }
                     }
@@ -516,6 +574,7 @@ BarWidget {
                             MailButton { text: "↗"; tooltipText: "Show links (o)"; selected: root.showLinks; enabled: !!mail.message && !root.busy; onClicked: root.toggleLinks() }
                             MailButton { objectName: "readerMarkRead"; text: "✓"; tooltipText: "Mark this message read (m)"; enabled: !!mail.message && !!root.displayedEnvelope && root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, true) }
                             MailButton { objectName: "readerMarkUnread"; text: "●"; tooltipText: "Mark this message unread (u)"; enabled: !!mail.message && !!root.displayedEnvelope && !root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, false) }
+                            MailButton { objectName: "readerDelete"; text: "Delete"; tooltipText: "Delete this message (Delete) · confirmation required"; enabled: !!mail.message && !!root.displayedEnvelope && !root.busy; onClicked: root.requestDelete(mail.selectedId) }
                             MailButton { text: "×"; tooltipText: "Close (q)"; onClicked: root.close() }
                         }
                         MailLabel {
@@ -696,6 +755,44 @@ BarWidget {
                     }
             }
             Rectangle {
+                id: deleteOverlay
+                objectName: "deleteConfirmation"
+                visible: root.confirmingDelete
+                anchors.fill: parent
+                z: 20
+                color: Color.background
+                border.color: Color.accent
+                // No focused background button or TextArea receives modal keys.
+                Keys.onPressed: function(event) { event.accepted = root.opened && root.confirmingDelete }
+                MouseArea { anchors.fill: parent }
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    width: Math.max(0, parent.width - 48)
+                    spacing: 14
+                    MailLabel { text: "Delete this message?"; font.pixelSize: 16; font.bold: true }
+                    MailLabel {
+                        Layout.fillWidth: true
+                        text: root.deleteSnapshot ? "Account: " + (root.deleteSnapshot.account || (mail.demo ? "Demo" : "Default account (explicit account required)")) +
+                            "\nFolder: " + root.deleteSnapshot.folderName + " [" + (root.deleteSnapshot.folder || "configured Inbox") + "]" +
+                            "\nID: " + root.deleteSnapshot.id + "\nSubject: " + root.deleteSnapshot.subject : ""
+                        wrapMode: Text.WrapAnywhere
+                        maximumLineCount: 6
+                        elide: Text.ElideRight
+                    }
+                    MailLabel {
+                        Layout.fillWidth: true
+                        text: "Himalaya moves this message to Trash, or requests permanent removal if it is already in Trash. Without IMAP UIDPLUS, it may only be flagged Deleted pending expunge. If Trash cannot be resolved, deletion fails. Jitsmail does not expunge."
+                        wrapMode: Text.Wrap
+                    }
+                    MailLabel { visible: mail.demo; text: "Demo only: no real mail changes; refresh restores fixtures."; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                    MailLabel { text: "Enter confirms · h / Esc cancels" }
+                    RowLayout {
+                        MailButton { objectName: "cancelDelete"; text: "Cancel"; focusable: false; onClicked: root.cancelDelete() }
+                        MailButton { objectName: "confirmDelete"; text: "Delete"; focusable: false; enabled: !root.busy; onClicked: root.confirmDelete() }
+                    }
+                }
+            }
+            Rectangle {
                 id: folderOverlay
                 objectName: "folderMenu"
                 visible: root.showFolders
@@ -826,6 +923,7 @@ BarWidget {
                                 ["a", "Attachments: j/k select"],
                                 ["s / Enter", "Save / open attachment (in a)"],
                                 ["M", "Move message to folder"],
+                                ["Delete", "Delete message · confirm Enter"],
                                 ["m / u", "Mark read / unread"],
                                 ["r", "Refresh folder"],
                                 ["Ctrl+c", "Copy selected text"],

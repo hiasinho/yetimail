@@ -37,6 +37,16 @@ Item {
     property bool loading: false
     property bool reading: false
     property bool marking: false
+    property int listRequest: 0
+    property int readRequest: 0
+    property bool deleting: false
+    function deleteMessage(id) {
+        record("delete", id)
+        fixtures = fixtures.filter(function(row) { return row.id !== id })
+        messages = messages.filter(function(row) { return row.id !== id })
+        if (selectedId === id) { selectedId = ""; message = null }
+        return true
+    }
     property bool moving: false
     function moveMessage(id, destination) {
         record("move", id, destination)

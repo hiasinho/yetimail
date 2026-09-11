@@ -12,7 +12,7 @@ A keyboard-first Omarchy mail panel powered by **Himalaya 2.1**. Read and manage
 - Safe text-only message display with compact numbered web links and destination previews.
 - Keyboard-accessible attachment details, safe saving, and explicit opening of supported types.
 - Explicit mark-read / mark-unread actions. Opening a message does **not** mark it seen.
-- No sending, deleting, or remote images.
+- Single-message deletion with mandatory confirmation; no sending or remote images.
 - Demo mode requires no account and never invokes Himalaya.
 
 Inspired by [omarchy-mail](https://github.com/roymckenzie/omarchy-mail). This is an independent implementation using Himalaya rather than implementing IMAP itself.
@@ -33,7 +33,7 @@ himalaya --account personal --json envelope list --page-size 5
 
 Use the default account or select an account through plugin settings. Jitsmail starts at the account's default inbox alias; the folder picker discovers that account's selectable mailboxes. Keep passwords in your password manager/keyring, not plugin settings or this repository. Authentication must work without an interactive prompt; the helper has closed stdin and a 30-second timeout.
 
-Gmail/OAuth, compose/reply, moving/archiving/deleting messages, search, and offline sync are outside this milestone.
+Gmail/OAuth, compose/reply, bulk operations, search, and offline sync are outside this milestone.
 
 ## Install the local checkout
 
@@ -74,6 +74,7 @@ All commands work inside the panel, including while the selectable message text 
 | `j` / `k`, `↓` / `↑` | Select next/previous message in list; scroll in reader |
 | `Enter`, `l`, `→` | Open the highlighted message and focus reader |
 | `h`, `←` | Return from links to reader, or reader to list |
+| `Delete` | Delete highlighted/displayed message: always confirm with `Enter` or Delete button; `h/Esc` cancels |
 | `Shift+M` | Move picker: `j/k` select destination, `Enter` moves, `h/Esc` cancels |
 | `f` | Open/close folder picker; `j/k` select, `Enter/l` opens, `h/Esc` dismisses |
 | `gi` / `gs` / `ga` / `gt` | Go to Inbox / Sent / Archive / Trash |
@@ -94,7 +95,7 @@ All commands work inside the panel, including while the selectable message text 
 | `q` | Close panel |
 | `Ctrl+c` | Copy selected message text |
 
-Status changes target the highlighted row in list mode, or the open message in reader mode. Only explicit `m`/`u` commands or their buttons change server flags. Real status changes require an explicitly selected account (not an unnamed default); the `hiash,hiasinho` allowlist supplies this. Actions wait for server success before updating the badge; failures leave the old status intact. No automatic marking when opening or navigating.
+Status changes target the highlighted row in list mode, or the open message in reader mode. Only explicit `m`/`u` commands or their buttons change read status. Real status changes require an explicitly selected account (not an unnamed default); the `hiash,hiasinho` allowlist supplies this. Actions wait for server success before updating the badge; failures leave the old status intact. No automatic marking when opening or navigating.
 
 Older/newer navigation preserves the current page on failure. A full page enables Older; an exact multiple of 50 can therefore have a final empty page. IMAP pages can shift as new mail arrives. Account switching returns to page 1.
 
@@ -105,6 +106,14 @@ Press `f` or click the folder icon beside the account tabs to open the compact d
 Changing folders resets to page 1 and clears the old reader; changing accounts returns to Inbox. All message reads, status changes, and attachment saves are scoped to the selected mailbox, even when two folders contain the same message ID. Before explicit-folder operations, the helper reads Himalaya's configuration to verify that a folder ID is not redirected by a mailbox alias. Conflicting aliases or configurations it cannot safely interpret are rejected rather than accessing a different folder; credentials are never logged. Folder navigation itself never moves, archives, deletes, or marks a message read. There is intentionally no `e` archive action yet.
 
 Press `Shift+M` to move the highlighted message (or the displayed message in reader mode). The destination picker uses discovered folders; `j/k` selects, `Enter` moves, and `h/Esc` cancels without changes. Moves to the same folder are rejected, including when the configured Inbox alias resolves to that destination. Moving does not navigate to the destination or explicitly change read flags. On success the source row disappears and selection advances; on failure the message remains with an error. Both source and destination receive alias-routing checks. Moving to Trash is a folder move, not permanent deletion. There is no bulk move or undo yet.
+
+## Deleting one message
+
+Press `Delete` for the highlighted row in list mode or the displayed message in reader mode. The reader toolbar's **Delete** button always targets its displayed message. Both routes **always ask for confirmation**, showing a snapshot of the account, folder, message ID, and subject. Only `Enter` or the modal's Delete button confirms; `h`, `Esc`, or Cancel dismisses without changes. Other panel shortcuts and background controls are disabled during confirmation. Closing, navigating, or changing message/account/config state invalidates the prompt; repeated submission is guarded. Real deletion requires an explicit account.
+
+Himalaya 2.1's `message delete` follows its **trash-first policy**: it moves to the configured Trash, or requests permanent removal when already in Trash. On IMAP without UIDPLUS, a message may instead be flagged `Deleted` pending expunge; success does **not** guarantee permanent removal. An unresolved Trash is an error, not permission to bypass Trash. Jitsmail never expunges or performs bulk deletion.
+
+After success, the source row is removed locally, selection advances to the next row (previous at the end), a matching reader is cleared, and the page is refreshed. The server's refreshed state remains authoritative, including messages pending expunge. Errors preserve the row and reader. Explicit source folders receive the same literal mailbox/alias-routing guard as other operations. Demo deletion never accesses config or Himalaya; refreshing restores synthetic messages. There is no undo in Jitsmail.
 
 ## Reading links
 
@@ -133,6 +142,7 @@ scripts/test-lifecycle
 scripts/test-pagination
 scripts/test-folders
 scripts/test-moves
+scripts/test-deletions
 scripts/test-keyboard
 scripts/test-attachments
 bin/jitsmail-helper list --demo
@@ -142,6 +152,8 @@ bin/jitsmail-helper read --demo --id demo-1
 The smoke test launches a temporary **offscreen** Quickshell with demo data, tests the QML → helper → inbox/read round trip, then exits. It does not install/enable anything or access your mail. Override `OMARCHY_SHELL_PATH` if Omarchy's shell is elsewhere. A guard executable prevents accidental Himalaya access even if demo mode regresses.
 
 The lifecycle tests use shell fixtures instead of Python/Himalaya to check delayed host settings, overlapping requests, stale-result rejection, and failed launches. They replace only the compositor popup container for offscreen operation. Missing-executable warnings are expected in these tests.
+
+Deletion tests cover safe CLI arguments, explicit-account and mailbox guards, synthetic demo operation, service failures/stale results/duplicate latches, and keyboard confirmation/cancellation/stale snapshots. Only mocked subprocesses, synthetic configs, and offline QML fixtures are used—no real mail commands run.
 
 Attachment tests cover safe extraction, private unique writes in temporary homes, traversal/symlink defenses, runnable-type restrictions, and service save/open guards with offline fixtures. No tests open real attachments or alter real mail flags.
 

@@ -39,7 +39,7 @@ Item {
     }
 
     function selectFolder(id) {
-        if (!ready || !active || moving || marking || savingAttachment || openingAttachment || typeof id !== "string") return false
+        if (!ready || !active || deleting || moving || marking || savingAttachment || openingAttachment || typeof id !== "string") return false
         var folder = folders.find(function(f) { return f.id === id })
         if (id && !folder) { foldersError = "Folder is not available."; return false }
         pendingFolderRole = ""
@@ -53,20 +53,21 @@ Item {
 
     function retryPendingFolderRole() {
         if (!pendingFolderRole || !foldersLoaded || !ready || !active
-            || moving || marking || savingAttachment || openingAttachment) return
+            || deleting || moving || marking || savingAttachment || openingAttachment) return
         var role = pendingFolderRole
         pendingFolderRole = ""
         selectFolderRole(role)
     }
     // Discovery may finish while an operation has latched. Retry next turn,
     // after exit handlers finish applying old-folder results or launching a viewer.
+    onDeletingChanged: if (!deleting) Qt.callLater(retryPendingFolderRole)
     onMovingChanged: if (!moving) Qt.callLater(retryPendingFolderRole)
     onMarkingChanged: if (!marking) Qt.callLater(retryPendingFolderRole)
     onSavingAttachmentChanged: if (!savingAttachment) Qt.callLater(retryPendingFolderRole)
     onOpeningAttachmentChanged: if (!openingAttachment) Qt.callLater(retryPendingFolderRole)
 
     function selectFolderRole(role) {
-        if (!ready || !active || moving || marking || savingAttachment || openingAttachment
+        if (!ready || !active || deleting || moving || marking || savingAttachment || openingAttachment
             || ["inbox", "sent", "archive", "trash"].indexOf(role) < 0) return false
         if (!foldersLoaded) {
             pendingFolderRole = role
@@ -129,7 +130,7 @@ Item {
             && message && message.id === attachmentMessageId && selectedId === attachmentMessageId
     }
     function saveAttachment(id, openAfter) {
-        if (!ready || !active || loading || reading || moving || marking || savingAttachment || openingAttachment
+        if (!ready || !active || loading || reading || deleting || moving || marking || savingAttachment || openingAttachment
             || !message || message.id !== selectedId || typeof id !== "string" || !id) return
         var attachment = (Array.isArray(message.attachments) ? message.attachments : []).find(function(a) { return a.id === id })
         if (!attachment) return
@@ -152,6 +153,12 @@ Item {
     property int page: 1
     property bool hasNext: false
     property bool marking: false
+    property bool deleting: false
+    property int deleteGeneration: 0
+    property int deleteRequest: 0
+    property string deleteAccount: ""
+    property string deleteFolder: ""
+    property string deleteId: ""
     property bool moving: false
     property int moveGeneration: 0
     property int moveRequest: 0
@@ -228,7 +235,7 @@ Item {
     }
 
     function fetchPage(target) {
-        if (!ready || !active || loading || moving || marking || (reading && target !== page)) return
+        if (!ready || !active || loading || deleting || moving || marking || (reading && target !== page)) return
         if (target !== page) {
             selectedId = ""
             message = null
@@ -245,7 +252,7 @@ Item {
     }
 
     function setRead(id, seen) {
-        if (!ready || !active || loading || reading || moving || marking) return
+        if (!ready || !active || loading || reading || deleting || moving || marking) return
         actionError = ""
         if (!account.trim() && !demo) {
             actionError = "Select an explicit account before changing read status."
@@ -266,6 +273,35 @@ Item {
         markProcess.running = true
     }
 
+    function deleteCurrent() {
+        return active && deleteGeneration === generation && deleteAccount === account && deleteFolder === folderId
+    }
+
+    // The UI must confirm its snapshot before calling this single-message API.
+    function deleteMessage(id) {
+        if (!ready || !active || loading || reading || marking || deleting || moving || savingAttachment || openingAttachment) return false
+        actionError = ""
+        if (!account.trim() && !demo) {
+            actionError = "Select an explicit account before deleting messages."
+            return false
+        }
+        if (typeof id !== "string" || !id.trim() || !messages.some(function(m) { return m.id === id })) {
+            actionError = "Message is not on the current page."
+            return false
+        }
+        deleteGeneration = generation
+        deleteAccount = account
+        deleteFolder = folderId
+        deleteId = id
+        deleting = true
+        deleteRequest++
+        var args = command("delete")
+        if (!account && demo) args.push("--account", "Demo")
+        deleteProcess.command = args.concat(["--id", id])
+        deleteProcess.running = true
+        return true
+    }
+
     function moveCurrent() {
         return active && moveGeneration === generation && moveAccount === account && moveFolder === folderId
     }
@@ -273,7 +309,7 @@ Item {
     // Only discovered, exact destination IDs are accepted. The helper resolves
     // the empty source's configured Inbox alias for same-folder validation.
     function moveMessage(id, destination) {
-        if (!ready || !active || loading || reading || marking || moving || savingAttachment || openingAttachment) return false
+        if (!ready || !active || loading || reading || marking || deleting || moving || savingAttachment || openingAttachment) return false
         actionError = ""
         if (!account.trim() && !demo) {
             actionError = "Select an explicit account before moving messages."
@@ -307,7 +343,7 @@ Item {
     }
 
     function readMessage(id) {
-        if (!active || reading || moving || marking || (loading && requestedPage !== page)) return
+        if (!active || reading || deleting || moving || marking || (loading && requestedPage !== page)) return
         selectedId = String(id)
         attachmentStatus = ""
         cancelAttachmentOpen()
@@ -537,6 +573,41 @@ Item {
                 // Refill the current page; an emptied final page falls back.
                 var target = !root.messages.length && root.page > 1 ? root.page - 1 : root.page
                 Qt.callLater(function() { root.fetchPage(root.moveCurrent() ? target : root.page) })
+            } catch (e) { root.actionError = e.message }
+        }
+    }
+    Process {
+        id: deleteProcess
+        stdout: StdioCollector { id: deleteOutput; waitForEnd: true }
+        stderr: StdioCollector { waitForEnd: true }
+        onRunningChanged: {
+            if (running) return
+            var request = root.deleteRequest
+            Qt.callLater(function() {
+                if (request !== root.deleteRequest || !root.deleting || deleteProcess.running) return
+                root.deleting = false
+                if (!root.deleteCurrent()) Qt.callLater(root.refresh)
+                else root.actionError = "Could not launch Python 3 to delete message."
+            })
+        }
+        onExited: function(code, status) {
+            root.deleting = false
+            if (!root.deleteCurrent()) { Qt.callLater(root.refresh); return }
+            try {
+                var data = root.result(deleteOutput.text, code)
+                if (data.id !== root.deleteId)
+                    throw new Error("Invalid delete response from mail helper.")
+                root.messages = root.messages.filter(function(m) { return m.id !== root.deleteId })
+                if (root.selectedId === root.deleteId) {
+                    root.selectedId = ""
+                    root.message = null
+                    root.readError = ""
+                    root.attachmentStatus = ""
+                    root.cancelAttachmentOpen()
+                }
+                // Refill the current page; an emptied final page falls back.
+                var target = !root.messages.length && root.page > 1 ? root.page - 1 : root.page
+                Qt.callLater(function() { root.fetchPage(root.deleteCurrent() ? target : root.page) })
             } catch (e) { root.actionError = e.message }
         }
     }

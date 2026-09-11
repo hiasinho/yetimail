@@ -6,12 +6,13 @@ Item {
     property string account: ""
     property string config: ""
     property int generation: 0
-    onConfigChanged: generation++
+    onConfigChanged: { generation++; foldersLoaded = false }
     property bool demo: false
     readonly property string accountLabel: account || "Fixture"
     property string folderId: ""
     property string folderName: "Inbox"
     property bool foldersLoading: false
+    property bool foldersLoaded: false
     property string foldersError: ""
     property var folders: [
         {id: "INBOX", name: "Inbox", role: "inbox"},
@@ -20,7 +21,7 @@ Item {
         {id: "Trash", name: "Trash", role: "trash"},
         {id: "Projects/2026", name: "Projects / 2026", role: ""}
     ]
-    function loadFolders() { record("folders"); foldersError = "" }
+    function loadFolders() { record("folders"); foldersError = ""; foldersLoaded = true }
     function selectFolder(id) {
         record("folder", id)
         folderId = id
@@ -144,6 +145,6 @@ Item {
         messages = fixtures.slice((page - 1) * 50, page * 50)
         return true
     }
-    onAccountChanged: { folderId = ""; folderName = "Inbox"; foldersError = ""; populate() }
+    onAccountChanged: { folderId = ""; folderName = "Inbox"; foldersLoaded = false; foldersError = ""; populate() }
     Component.onCompleted: populate()
 }

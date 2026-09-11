@@ -24,6 +24,7 @@ ColumnLayout {
     required property var icons
     required property bool busy
     required property bool showFolders
+    required property bool showAccounts
     required property bool switchingBlocked
     required property var accounts
     required property string currentAccount
@@ -33,7 +34,7 @@ ColumnLayout {
     required property bool showHelp
     signal refreshRequested()
     signal foldersRequested()
-    signal accountRequested(string name)
+    signal accountsRequested()
     signal listFocused()
     signal messageRequested(string messageId)
     signal toggleSelectionRequested(string messageId)
@@ -49,9 +50,10 @@ ColumnLayout {
     signal helpRequested()
     signal retryMovesRequested()
     signal cancelMovesRequested()
-    readonly property point folderAnchor: Qt.point(accountFlow.x + folderButton.x, accountFlow.y + folderButton.y + folderButton.height + 2)
+    readonly property point accountAnchor: Qt.point(pickerRow.x + accountButton.x, pickerRow.y + accountButton.y + accountButton.height + 2)
+    readonly property point folderAnchor: Qt.point(pickerRow.x + folderButton.x, pickerRow.y + folderButton.y + folderButton.height + 2)
     readonly property real desiredListHeight: Math.max(90, Math.min(7, messages.length) * 68)
-    readonly property real preferredContentHeight: headerRow.implicitHeight + accountFlow.implicitHeight + selectionFlow.implicitHeight + desiredListHeight + footerRow.implicitHeight + spacing * 4
+    readonly property real preferredContentHeight: headerRow.implicitHeight + pickerRow.implicitHeight + selectionFlow.implicitHeight + desiredListHeight + footerRow.implicitHeight + spacing * 4
     readonly property real listHeight: inbox.height
     readonly property Item focusTarget: inbox
     function focusList() { inbox.forceActiveFocus() }
@@ -90,34 +92,35 @@ ColumnLayout {
         }
         MailButton { objectName: "inboxRefreshButton"; text: view.loading ? "…" : "Refresh"; iconText: view.loading ? "" : view.icons.refresh; tooltipText: "Refresh (r)"; enabled: !view.busy; onClicked: view.refreshRequested() }
     }
-    Flow {
-        id: accountFlow
+    RowLayout {
+        id: pickerRow
         Layout.fillWidth: true
         spacing: 6
         MailButton {
+            id: accountButton
+            objectName: "accountButton"
+            Layout.preferredWidth: 36
+            Layout.preferredHeight: 36
+            iconText: view.icons.account
+            tooltipText: (view.currentAccount || view.accountLabel) + " · Choose account"
+            bordered: true
+            selected: view.showAccounts
+            enabled: !view.switchingBlocked
+            onClicked: view.accountsRequested()
+        }
+        MailButton {
             id: folderButton
             objectName: "folderButton"
+            Layout.preferredWidth: 36
+            Layout.preferredHeight: 36
             iconText: view.icons.inbox
-            tooltipText: view.folderName + " · Choose folder (f)"
+            tooltipText: view.folderName + " · Choose mailbox (f)"
             bordered: true
             selected: view.showFolders
             enabled: !view.switchingBlocked
             onClicked: view.foldersRequested()
         }
-        Repeater {
-            model: view.accounts.length ? view.accounts : [view.currentAccount || view.accountLabel]
-            MailButton {
-                required property string modelData
-                width: Math.min(implicitWidth, view.width)
-                clip: true
-                text: modelData
-                bordered: true
-                selected: view.currentAccount === modelData || !view.accounts.length
-                enabled: !view.switchingBlocked
-                tooltipText: modelData + " · [ / ] switch account"
-                onClicked: view.accountRequested(modelData)
-            }
-        }
+        Item { Layout.fillWidth: true }
     }
     Flow {
         id: selectionFlow

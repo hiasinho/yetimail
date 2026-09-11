@@ -53,7 +53,7 @@ ShellRoot {
                 widget.selectedAccount = "alpha"
                 widget.cancelDelete(); mail.deleting = false
                 mail.loading = false; mail.reading = false; mail.marking = false; mail.moving = false; mail.savingAttachment = false; mail.openingAttachment = false
-                mail.folderId = ""; mail.folderName = "Inbox"; mail.foldersLoading = false; mail.foldersError = ""
+                mail.folderId = ""; mail.folderName = "Inbox"; mail.foldersLoading = false; mail.foldersLoaded = false; mail.foldersError = ""
                 widget.showFolders = false
                 widget.clearSelection()
                 widget.cursorId = ""
@@ -433,10 +433,35 @@ ShellRoot {
             function test_folder_navigation() {
                 press(Qt.Key_Return); press(Qt.Key_N)
                 equal(mail.page, 2)
+                var accountButton = find(widget, function(item) { return item.objectName === "accountButton" })
                 var folderButton = find(widget, function(item) { return item.objectName === "folderButton" })
-                check(folderButton !== null, "folder icon button found")
-                equal(folderButton.x, 0, "folder icon comes before account chips")
-                check(folderButton.width < 50 && folderButton.tooltipText.indexOf("Inbox") !== -1, "compact icon exposes current folder in tooltip")
+                check(accountButton !== null && folderButton !== null, "account and mailbox icon buttons found")
+                equal(accountButton.x, 0, "account dropdown comes first")
+                equal(accountButton.y, folderButton.y, "account and mailbox buttons align")
+                equal(accountButton.height, folderButton.height, "account and mailbox buttons share a height")
+                check(folderButton.x > accountButton.x && folderButton.width < 50 && folderButton.tooltipText.indexOf("Inbox") !== -1,
+                    "compact mailbox icon follows account icon")
+                mouseClick(accountButton, accountButton.width / 2, accountButton.height / 2); wait(30)
+                check(widget.showAccounts, "account icon opens dropdown")
+                var dismissArea = find(widget, function(item) { return item.objectName === "pickerDismissArea" })
+                var buttonPoint = accountButton.mapToItem(window.contentItem, accountButton.width / 2, accountButton.height / 2)
+                mouseClick(window.contentItem, buttonPoint.x, buttonPoint.y); wait(30)
+                check(!widget.showAccounts, "clicking the account icon area again closes dropdown")
+                mouseClick(accountButton, accountButton.width / 2, accountButton.height / 2); wait(30)
+                mouseClick(dismissArea, dismissArea.width - 5, dismissArea.height - 5); wait(30)
+                check(!widget.showAccounts, "clicking outside closes dropdown")
+                mouseClick(accountButton, accountButton.width / 2, accountButton.height / 2); wait(30)
+                var accountMenu = find(widget, function(item) { return item.objectName === "accountMenu" })
+                var accountPicker = find(widget, function(item) { return item.objectName === "accountPicker" })
+                equal(accountPicker.count, 2, "account dropdown lists allowed accounts")
+                var accountAnchor = accountMenu.mapToItem(accountButton, 0, 0)
+                equal(accountAnchor.x, 0, "account menu left aligns with icon")
+                equal(accountAnchor.y, accountButton.height + 2, "account menu sits beneath icon")
+                press(Qt.Key_J); press(Qt.Key_Return)
+                equal(widget.currentAccount, "beta", "account dropdown chooses highlighted account")
+                check(!widget.showAccounts)
+                press(Qt.Key_BracketLeft); equal(widget.currentAccount, "alpha")
+                press(Qt.Key_N); equal(mail.page, 2)
                 mouseClick(folderButton, folderButton.width / 2, folderButton.height / 2); wait(30)
                 check(widget.showFolders, "folder icon opens dropdown")
                 var menu = find(widget, function(item) { return item.objectName === "folderMenu" })
@@ -448,6 +473,12 @@ ShellRoot {
                 equal(anchor.y, folderButton.height + 2, "menu sits beneath icon")
                 equal(picker.count, mail.folders.length, "only discovered folders are listed")
                 check(find(picker, function(item) { return item.text === "Sent mail" }) !== null, "folder name shown without role suffix")
+                equal(mail.calls.filter(function(call) { return call.operation === "folders" }).length, 1,
+                    "first opening discovers folders")
+                mouseClick(dismissArea, dismissArea.width - 5, dismissArea.height - 5); wait(30)
+                mouseClick(folderButton, folderButton.width / 2, folderButton.height / 2); wait(30)
+                equal(mail.calls.filter(function(call) { return call.operation === "folders" }).length, 1,
+                    "reopening reuses cached folders")
                 equal(widget.folderIndex, 0)
                 var count = mail.calls.length
                 press(Qt.Key_M); press(Qt.Key_U); press(Qt.Key_N); press(Qt.Key_P)

@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import QtQuick.Controls
 import qs.Ui
 import qs.Commons
+import "ui"
 
 BarWidget {
     id: root
@@ -79,9 +80,9 @@ BarWidget {
         // State invalidation must not steal focus from the new context.
         if (restoreFocus !== false && snapshot && opened && snapshot.pane === pane) {
             if (pane === "reader") {
-                if (showLinks) linkList.forceActiveFocus()
-                else messageText.forceActiveFocus()
-            } else inbox.forceActiveFocus()
+                if (showLinks) readerPane.focusLinks()
+                else readerPane.focusBody()
+            } else sidebar.focusList()
         }
     }
     function confirmDelete() {
@@ -120,7 +121,7 @@ BarWidget {
         showFolders = true
         mail.loadFolders()
         syncFolderCursor()
-        folderList.forceActiveFocus()
+        folderOverlay.focusList()
     }
     function openMovePicker() {
         if (busy || showHelp || showFolders || !targetEnvelope) return
@@ -140,29 +141,19 @@ BarWidget {
         })
         folderIndex = Math.max(0, index)
         Qt.callLater(function() {
-            if (root.showFolders && mail.folders.length) folderList.positionViewAtIndex(root.folderIndex, ListView.Contain)
+            if (root.showFolders && mail.folders.length) folderOverlay.reveal(root.folderIndex)
         })
-    }
-    function folderIcon(folder) {
-        var name = String(folder.role || folder.name || "").toLowerCase()
-        if (name === "inbox") return icons.inbox
-        if (name === "sent" || name === "sent mail" || name === "sent items") return icons.sent
-        if (name === "draft" || name === "drafts") return icons.drafts
-        if (name === "archive" || name === "archives") return icons.archive
-        if (name === "junk" || name === "spam") return icons.junk
-        if (name === "trash" || name === "deleted items") return icons.trash
-        return icons.folder
     }
     function moveFolder(delta) {
         folderIndex = Math.max(0, Math.min(mail.folders.length - 1, folderIndex + delta))
-        if (mail.folders.length) folderList.positionViewAtIndex(folderIndex, ListView.Contain)
+        if (mail.folders.length) folderOverlay.reveal(folderIndex)
     }
     function dismissFolders() {
         showFolders = false
         movePicker = false
         moveTargetId = ""
-        if (pane === "reader") messageText.forceActiveFocus()
-        else inbox.forceActiveFocus()
+        if (pane === "reader") readerPane.focusBody()
+        else sidebar.focusList()
     }
     function chooseFolder() {
         if (!showFolders || switchingBlocked || mail.foldersLoading || !mail.folders[folderIndex]) return
@@ -199,75 +190,26 @@ BarWidget {
         mail.saveAttachment(selectedAttachment.id, openAfter)
     }
     readonly property var messageAttachments: mail.message && Array.isArray(mail.message.attachments) ? mail.message.attachments : []
-    function attachmentSize(size) {
-        if (typeof size !== "number" || !isFinite(size) || size < 0) return "Unknown size"
-        if (size < 1024) return size + " B"
-        var units = ["KiB", "MiB", "GiB", "TiB"]
-        var value = size / 1024
-        var unit = 0
-        while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++ }
-        return value.toFixed(1) + " " + units[unit]
-    }
-    function attachmentMetadata(attachment) {
-        var size = attachmentSize(attachment.size)
-        return "Name: " + (attachment.name || "Unnamed attachment") + "\nType: " + (attachment.type || "Unknown type") +
-            "\nSize: " + size + (typeof attachment.size === "number" && isFinite(attachment.size) && attachment.size >= 1024 ? " (" + attachment.size + " bytes)" : "")
-    }
     function toggleAttachments() {
         if (showHelp || showFolders || !mail.message || busy) return
         showAttachments = !showAttachments
         showLinks = false
         showHeaders = false
         pane = "reader"
-        messageText.forceActiveFocus()
+        readerPane.focusBody()
     }
     property int linkIndex: 0
     readonly property var messageLinks: mail.message && Array.isArray(mail.message.links) ? mail.message.links : []
     readonly property var selectedLink: messageLinks[linkIndex] || null
     property var openUrl: function(url) { return Qt.openUrlExternally(url) }
 
-    // Keep the panel on the shell's configured monospace font, not Qt's UI font.
-    component MailLabel: Text {
-        font.family: Style.font.family
-        font.pixelSize: 12
-        color: Color.foreground
-        textFormat: Text.PlainText
-    }
-    component MailButton: Button {
-        fontFamily: Style.font.family
-        fontSize: 11
-        horizontalPadding: 6
-        verticalPadding: 4
-        radius: 0
-        focusable: true
-    }
-    function senderName(from) {
-        var value = String(from || "")
-        var name = value.replace(/\s*<[^>]*>\s*$/, "").trim().replace(/^"(.*)"$/, "$1")
-        return name || senderAddress(value) || "Unknown sender"
-    }
-    function senderAddress(from) {
-        var value = String(from || "")
-        var match = value.match(/<([^>]+)>/)
-        return match ? match[1] : value.indexOf("@") !== -1 ? value : ""
-    }
-    function shortDate(value) {
-        var date = new Date(value)
-        if (isNaN(date.getTime())) return String(value || "")
-        return Qt.formatDateTime(date, date.toDateString() === new Date().toDateString() ? "HH:mm" : "MMM d")
-    }
-
-    function headerDate(value) {
-        var date = new Date(value)
-        return isNaN(date.getTime()) ? String(value || "") : Qt.formatDateTime(date, "MMM d  HH:mm")
-    }
     function toggleHeaders() {
         if (showHelp || showFolders || !mail.message || busy) return
         showHeaders = !showHeaders
         showLinks = false
         showAttachments = false
         pane = "reader"
-        messageText.forceActiveFocus()
+        readerPane.focusBody()
     }
     function toggleLinks() {
         if (showHelp || showFolders || !mail.message || busy) return
@@ -275,12 +217,12 @@ BarWidget {
         showLinks = !showLinks
         showHeaders = false
         showAttachments = false
-        if (showLinks) linkList.forceActiveFocus()
-        else messageText.forceActiveFocus()
+        if (showLinks) readerPane.focusLinks()
+        else readerPane.focusBody()
     }
     function moveLink(delta) {
         linkIndex = Math.max(0, Math.min(messageLinks.length - 1, linkIndex + delta))
-        if (linkIndex >= 0) linkList.positionViewAtIndex(linkIndex, ListView.Contain)
+        if (linkIndex >= 0) readerPane.revealLink(linkIndex)
     }
     function openLink() {
         if (showHelp || showFolders || !showLinks || !selectedLink || busy) return
@@ -302,12 +244,12 @@ BarWidget {
         selectAccount(accounts[(index + delta + accounts.length) % accounts.length])
     }
     function close() { opened = false }
-    function focusList() { showLinks = false; showAttachments = false; pane = "list"; inbox.forceActiveFocus() }
+    function focusList() { showLinks = false; showAttachments = false; pane = "list"; sidebar.focusList() }
     function back() {
         if (showFolders) { dismissFolders(); return }
         if (showHelp) return
-        if (showAttachments) { showAttachments = false; messageText.forceActiveFocus() }
-        else if (showLinks) { showLinks = false; messageText.forceActiveFocus() }
+        if (showAttachments) { showAttachments = false; readerPane.focusBody() }
+        else if (showLinks) { showLinks = false; readerPane.focusBody() }
         else focusList()
     }
     function syncCursor() {
@@ -317,18 +259,17 @@ BarWidget {
         }
         moveNextId = ""
         Qt.callLater(function() {
-            if (root.cursorIndex >= 0) inbox.positionViewAtIndex(root.cursorIndex, ListView.Contain)
+            if (root.cursorIndex >= 0) sidebar.reveal(root.cursorIndex)
         })
     }
     function moveCursor(delta) {
         if (!mail.messages.length) return
         var index = Math.max(0, Math.min(mail.messages.length - 1, cursorIndex + delta))
         cursorId = mail.messages[index].id
-        inbox.positionViewAtIndex(index, ListView.Contain)
+        sidebar.reveal(index)
     }
     function scrollReader(delta) {
-        var view = reader.contentItem
-        view.contentY = Math.max(0, Math.min(Math.max(0, view.contentHeight - view.height), view.contentY + delta))
+        readerPane.scroll(delta)
     }
     function navigate(delta) {
         if (showHelp) return
@@ -349,19 +290,19 @@ BarWidget {
     function halfPage(delta) {
         if (showHelp || showFolders) return
         if (showLinks) moveLink(delta * 5)
-        else if (pane === "reader") scrollReader(delta * reader.availableHeight / 2)
-        else moveCursor(delta * Math.max(1, Math.floor(inbox.height / 68 / 2)))
+        else if (pane === "reader") scrollReader(delta * readerPane.availableHeight / 2)
+        else moveCursor(delta * Math.max(1, Math.floor(sidebar.listHeight / 68 / 2)))
     }
     function openCurrent() {
         if (!cursorId || busy || showHelp || showFolders) return
         mail.readMessage(cursorId)
         pane = "reader"
-        messageText.forceActiveFocus()
+        readerPane.focusBody()
     }
     function switchPane() {
         if (showHelp || showFolders) return
         if (pane === "reader") focusList()
-        else if (mail.selectedId) { pane = "reader"; messageText.forceActiveFocus() }
+        else if (mail.selectedId) { pane = "reader"; readerPane.focusBody() }
         else openCurrent()
     }
     function markCurrent(seen) { markMessage(targetId, seen) }
@@ -436,7 +377,7 @@ BarWidget {
         open: root.opened
         contentWidth: Math.max(1, Math.min(940, availableCardWidth - padding * 2))
         contentHeight: Math.max(1, Math.min(640, availableCardHeight - padding * 2))
-        focusTarget: inbox
+        focusTarget: sidebar.focusTarget
 
         FocusScope {
             id: content
@@ -486,502 +427,112 @@ BarWidget {
                 anchors.fill: parent
                 enabled: !root.confirmingDelete && !root.showFolders && !root.showHelp
                 spacing: 16
-                ColumnLayout {
+                InboxPane {
                     id: sidebar
                     Layout.preferredWidth: Math.min(310, content.width * 0.35)
                     Layout.minimumWidth: 0
                     Layout.maximumWidth: Layout.preferredWidth
-                    Layout.fillHeight: true
-                    spacing: 10
-                    RowLayout {
-                        Layout.fillWidth: true
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 3
-                            MailLabel { text: mail.demo ? "MAIL / DEMO" : "MAIL"; font.pixelSize: 10; font.letterSpacing: 1.5; opacity: 0.55 }
-                            MailLabel { Layout.fillWidth: true; text: mail.unread + " unread"; font.pixelSize: 14 }
-                        }
-                        MailButton { text: mail.loading ? "…" : "Refresh"; iconText: mail.loading ? "" : root.icons.refresh; tooltipText: "Refresh (r)"; enabled: !root.busy; onClicked: mail.refresh() }
-                    }
-                    Flow {
-                        id: accountFlow
-                        Layout.fillWidth: true
-                        spacing: 6
-                        MailButton {
-                            id: folderButton
-                            objectName: "folderButton"
-                            iconText: root.icons.inbox
-                            tooltipText: mail.folderName + " · Choose folder (f)"
-                            bordered: true
-                            selected: root.showFolders
-                            enabled: !root.switchingBlocked
-                            onClicked: root.toggleFolders()
-                        }
-                        Repeater {
-                            model: root.accounts.length ? root.accounts : [root.currentAccount || mail.accountLabel]
-                            MailButton {
-                                required property string modelData
-                                width: Math.min(implicitWidth, sidebar.width)
-                                clip: true
-                                text: modelData
-                                bordered: true
-                                selected: root.currentAccount === modelData || !root.accounts.length
-                                enabled: !root.switchingBlocked
-                                tooltipText: modelData + " · [ / ] switch account"
-                                onClicked: root.selectAccount(modelData)
-                            }
-                        }
-                    }
-                        ListView {
-                            id: inbox
-                            onActiveFocusChanged: if (activeFocus) root.pane = "list"
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            clip: true
-                            spacing: 2
-                            model: mail.messages
-                            ScrollBar.vertical: ScrollBar {}
-                            delegate: Rectangle {
-                                required property var modelData
-                                width: inbox.width
-                                height: 66
-                                radius: 0
-                                color: modelData.id === root.cursorId ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.14) : mouse.containsMouse ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.07) : "transparent"
-                                MailLabel {
-                                    x: 7; y: 9
-                                    text: root.icons.unread
-                                    font.pixelSize: 9
-                                    color: Color.accent
-                                    visible: modelData.unread
-                                }
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 22
-                                    anchors.rightMargin: 9
-                                    anchors.topMargin: 7
-                                    anchors.bottomMargin: 7
-                                    spacing: 3
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 6
-                                        MailLabel { Layout.fillWidth: true; Layout.minimumWidth: 0; text: root.senderName(modelData.from); color: Color.accent; font.bold: modelData.unread; elide: Text.ElideRight }
-                                        MailLabel { text: root.shortDate(modelData.date); font.pixelSize: 10; opacity: 0.55; Layout.maximumWidth: 65; elide: Text.ElideRight }
-                                    }
-                                    MailLabel { Layout.fillWidth: true; text: modelData.subject || "(No subject)"; elide: Text.ElideRight }
-                                    MailLabel { Layout.fillWidth: true; text: root.senderAddress(modelData.from); opacity: 0.5; font.pixelSize: 11; elide: Text.ElideRight }
-                                }
-                                MouseArea {
-                                    id: mouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    enabled: !root.busy
-                                    onClicked: { root.cursorId = modelData.id; root.openCurrent() }
-                                }
-                            }
-                            MailLabel {
-                                anchors.centerIn: parent
-                                width: parent.width
-                                visible: mail.messages.length === 0
-                                text: mail.loading ? "Loading " + mail.folderName + "…" : mail.listError ? "Folder unavailable" : "No messages on this page."
-                                color: Color.foreground
-                                horizontalAlignment: Text.AlignHCenter
-                                wrapMode: Text.Wrap
-                                textFormat: Text.PlainText
-                            }
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            MailButton { text: "Newer"; iconText: root.icons.previous; tooltipText: "Previous page (p)"; enabled: mail.page > 1 && !root.busy; onClicked: mail.previousPage() }
-                            MailLabel { Layout.fillWidth: true; text: "Page " + mail.page; horizontalAlignment: Text.AlignHCenter; opacity: 0.55; font.pixelSize: 10 }
-                            MailButton { text: "Older"; iconText: root.icons.next; tooltipText: "Next page (n)"; enabled: mail.hasNext && !root.busy; onClicked: mail.nextPage() }
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            MailLabel { Layout.fillWidth: true; text: mail.deleting ? "Deleting…" : mail.moving ? "Moving…" : mail.marking ? "Updating…" : mail.loading ? "Refreshing…" : mail.listError ? "Refresh failed · stale" : mail.messages.length + " messages on page"; opacity: 0.55; font.pixelSize: 10; elide: Text.ElideRight }
-                            MailButton { text: "Shortcuts ?"; selected: root.showHelp; onClicked: root.toggleHelp() }
-                        }
-                    }
-                    Rectangle { Layout.fillHeight: true; width: 1; color: Color.foreground; opacity: 0.15 }
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 2
-                            MailLabel { Layout.fillWidth: true; Layout.minimumWidth: 0; text: mail.message ? mail.message.subject || "(No subject)" : mail.folderName; font.pixelSize: 16; font.bold: true; elide: Text.ElideRight }
-                            MailButton { iconText: root.icons.headers; tooltipText: "Full selectable headers (v)"; selected: root.showHeaders; enabled: !!mail.message && !root.busy; onClicked: root.toggleHeaders() }
-                            MailButton { iconText: root.icons.attachment; tooltipText: "Attachment metadata (a)"; selected: root.showAttachments; enabled: !!mail.message && !root.busy; onClicked: root.toggleAttachments() }
-                            MailButton { iconText: root.icons.link; tooltipText: "Show links (o)"; selected: root.showLinks; enabled: !!mail.message && !root.busy; onClicked: root.toggleLinks() }
-                            MailButton { objectName: "readerMarkRead"; iconText: root.icons.read; tooltipText: "Mark this message read (m)"; enabled: !!mail.message && !!root.displayedEnvelope && root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, true) }
-                            MailButton { objectName: "readerMarkUnread"; iconText: root.icons.unread; tooltipText: "Mark this message unread (u)"; enabled: !!mail.message && !!root.displayedEnvelope && !root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, false) }
-                            MailButton { objectName: "readerDelete"; iconText: root.icons.delete; tooltipText: "Trash this message (Delete) · in Trash, confirm removal"; enabled: !!mail.message && !!root.displayedEnvelope && !root.busy; onClicked: root.requestDelete(mail.selectedId) }
-                            MailButton { iconText: root.icons.close; tooltipText: "Close (q)"; onClicked: root.close() }
-                        }
-                        MailLabel {
-                            objectName: "mailErrors"
-                            Layout.fillWidth: true
-                            visible: mail.listError !== "" || mail.actionError !== "" || mail.foldersError !== ""
-                            text: [mail.listError, mail.actionError, mail.foldersError].filter(function(error) { return !!error }).join("\n")
-                            wrapMode: Text.Wrap
-                            maximumLineCount: 4
-                            elide: Text.ElideRight
-                            color: Color.accent
-                        }
-                        ColumnLayout {
-                            visible: !!mail.message && !mail.reading && !mail.readError && !root.showHeaders
-                            Layout.fillWidth: true
-                            Layout.topMargin: 8
-                            Layout.bottomMargin: 8
-                            spacing: 4
-                            MailLabel { Layout.fillWidth: true; text: mail.accountLabel; opacity: 0.5; font.pixelSize: 11; elide: Text.ElideRight }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                MailLabel { Layout.fillWidth: true; text: mail.message ? root.senderName(mail.message.from) : ""; color: Color.accent; font.bold: true; elide: Text.ElideRight }
-                                MailLabel { Layout.maximumWidth: 125; elide: Text.ElideRight; text: mail.message ? root.headerDate(mail.message.date) : ""; opacity: 0.55; font.pixelSize: 11 }
-                            }
-                            MailLabel { Layout.fillWidth: true; text: mail.message ? "To    " + mail.message.to : ""; opacity: 0.55; font.pixelSize: 11; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight }
-                        }
-                        ListView {
-                            id: attachmentChips
-                            objectName: "attachmentChips"
-                            visible: !!mail.message && !mail.reading && !mail.readError && root.messageAttachments.length > 0
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            Layout.preferredHeight: 36
-                            Layout.maximumHeight: 36
-                            orientation: ListView.Horizontal
-                            spacing: 6
-                            clip: true
-                            model: root.messageAttachments
-                            ScrollBar.horizontal: ScrollBar {}
-                            delegate: Rectangle {
-                                required property var modelData
-                                required property int index
-                                width: Math.max(0, Math.min(240, attachmentChips.width))
-                                height: 26
-                                clip: true
-                                color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.07)
-                                border.color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.2)
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 5
-                                    spacing: 5
-                                    MailLabel { text: root.icons.attachment; font.pixelSize: 11 }
-                                    MailLabel { Layout.fillWidth: true; Layout.minimumWidth: 0; text: modelData.name || "Unnamed attachment"; elide: Text.ElideMiddle; font.pixelSize: 11 }
-                                    MailLabel { text: root.attachmentSize(modelData.size); font.pixelSize: 10; opacity: 0.6 }
-                                }
-                                MouseArea {
-                                    anchors.fill: parent
-                                    onClicked: {
-                                        if (root.busy) return
-                                        if (!root.showAttachments) root.toggleAttachments()
-                                        root.attachmentIndex = index
-                                    }
-                                }
-                                HoverHandler { id: attachmentHover }
-                                ToolTip {
-                                    id: attachmentTooltip
-                                    visible: attachmentHover.hovered
-                                    delay: 500
-                                    text: root.attachmentMetadata(modelData)
-                                    font.family: Style.font.family
-                                    width: Math.min(400, content.width)
-                                    contentItem: MailLabel { text: attachmentTooltip.text; wrapMode: Text.WrapAnywhere }
-                                }
-                            }
-                        }
-                        ColumnLayout {
-                            visible: root.showLinks
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            MailLabel { text: "Links · j/k select · Enter opens in browser · h back"; color: Color.foreground; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                            ListView {
-                                id: linkList
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                clip: true
-                                spacing: 4
-                                model: root.messageLinks
-                                ScrollBar.vertical: ScrollBar {}
-                                delegate: Rectangle {
-                                    required property var modelData
-                                    required property int index
-                                    width: linkList.width
-                                    height: 48
-                                    radius: 0
-                                    color: index === root.linkIndex ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.18) : "transparent"
-                                    border.width: index === root.linkIndex ? 1 : 0
-                                    border.color: Color.accent
-                                    Column {
-                                        anchors.fill: parent
-                                        anchors.margins: 7
-                                        MailLabel { width: parent.width; text: "[" + (index + 1) + "] " + modelData.label; textFormat: Text.PlainText; color: Color.foreground; elide: Text.ElideRight }
-                                        MailLabel { width: parent.width; text: modelData.url; textFormat: Text.PlainText; color: Color.foreground; opacity: 0.65; elide: Text.ElideMiddle }
-                                    }
-                                    MouseArea { anchors.fill: parent; onClicked: { root.linkIndex = index; linkList.forceActiveFocus() } }
-                                }
-                                MailLabel { anchors.centerIn: parent; visible: !root.messageLinks.length; text: "No web links in this message."; color: Color.foreground }
-                            }
-                            MailLabel { text: "Destination (may contain tracking):"; color: Color.foreground; visible: !!root.selectedLink }
-                            ScrollView {
-                                id: linkPreview
-                                contentWidth: availableWidth
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 100
-                                visible: !!root.selectedLink
-                                clip: true
-                                TextArea {
-                                    font.family: Style.font.family
-                                    font.pixelSize: 12
-                                    width: linkPreview.availableWidth
-                                    text: root.selectedLink ? root.selectedLink.url : ""
-                                    textFormat: TextEdit.PlainText
-                                    readOnly: true
-                                    selectByMouse: true
-                                    wrapMode: TextEdit.WrapAnywhere
-                                    color: Color.foreground
-                                    background: null
-                                }
-                            }
-                            MailButton { text: "Open in browser (Enter)"; enabled: !!root.selectedLink && !root.busy; focusable: true; onClicked: root.openLink() }
-                        }
-                        RowLayout {
-                            visible: root.showAttachments
-                            Layout.fillWidth: true
-                            MailButton { iconText: root.icons.previous; enabled: root.attachmentIndex > 0; onClicked: root.moveAttachment(-1) }
-                            MailLabel { text: (root.selectedAttachment ? root.attachmentIndex + 1 : 0) + " / " + root.messageAttachments.length }
-                            MailButton { iconText: root.icons.next; enabled: root.attachmentIndex + 1 < root.messageAttachments.length; onClicked: root.moveAttachment(1) }
-                            MailButton { objectName: "saveAttachment"; text: "Save (s)"; enabled: !!root.selectedAttachment && !root.busy; onClicked: root.attachmentAction(false) }
-                            MailButton { objectName: "openAttachment"; text: "Open (Enter)"; enabled: !!root.selectedAttachment && !!root.selectedAttachment.openable && !root.busy; onClicked: root.attachmentAction(true) }
-                        }
-                        MailLabel {
-                            visible: root.showAttachments && (mail.savingAttachment || mail.attachmentStatus !== "")
-                            Layout.fillWidth: true
-                            text: mail.savingAttachment ? "Saving attachment…" : mail.attachmentStatus
-                            wrapMode: Text.WrapAnywhere
-                        }
-                        ScrollView {
-                            id: reader
-                            objectName: "messageReader"
-                            visible: !root.showLinks
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            clip: true
-                            contentWidth: availableWidth
-                            TextArea {
-                                id: messageText
-                                objectName: "messageBody"
-                                width: reader.availableWidth
-                                readOnly: true
-                                selectByMouse: true
-                                wrapMode: TextEdit.Wrap
-                                textFormat: TextEdit.PlainText
-                                color: Color.foreground
-                                background: null
-                                font.family: Style.font.family
-                                // Native monospace metrics preserve plain-text spacing and copying.
-                                font.pixelSize: 13
-                                padding: 0
-                                onActiveFocusChanged: if (activeFocus && mail.selectedId) root.pane = "reader"
-                                text: mail.reading ? "Loading message…" : mail.readError ? mail.readError : mail.message ?
-                                    root.showAttachments ? ("Attachments · j/k select · s save · Enter open · h / Esc back\nSaves a unique private file in ~/Downloads. Open also saves a copy.\n\n" +
-                                        (root.selectedAttachment ? "[" + (root.attachmentIndex + 1) + "]\n" + root.attachmentMetadata(root.selectedAttachment) +
-                                         "\n\n" + (root.selectedAttachment.openable ? "Open with the default application only if you trust this file." : "Save-only type: opening is blocked.") : "No attachments in this message.")) :
-                                    (root.showHeaders ? "Subject: " + mail.message.subject + "\nFrom: " + mail.message.from + "\nTo: " + mail.message.to + "\nDate: " + mail.message.date + "\n\n" : "") + mail.message.body :
-                                    "Select a message with j/k, then press Enter to read.\n\nOpening a message does not mark it as read. Use m / u to change its status."
-                                onTextChanged: { cursorPosition = 0; reader.contentItem.contentY = 0 }
-                            }
-                        }
-                    }
+                    demo: mail.demo
+                    unread: mail.unread
+                    loading: mail.loading
+                    folderName: mail.folderName
+                    accountLabel: mail.accountLabel
+                    messages: mail.messages
+                    listError: mail.listError
+                    page: mail.page
+                    hasNext: mail.hasNext
+                    deleting: mail.deleting
+                    moving: mail.moving
+                    marking: mail.marking
+                    icons: root.icons
+                    busy: root.busy
+                    showFolders: root.showFolders
+                    switchingBlocked: root.switchingBlocked
+                    accounts: root.accounts
+                    currentAccount: root.currentAccount
+                    cursorId: root.cursorId
+                    showHelp: root.showHelp
+                    onRefreshRequested: mail.refresh()
+                    onFoldersRequested: root.toggleFolders()
+                    onAccountRequested: function(name) { root.selectAccount(name) }
+                    onListFocused: root.pane = "list"
+                    onMessageRequested: function(messageId) { root.cursorId = messageId; root.openCurrent() }
+                    onPreviousRequested: mail.previousPage()
+                    onNextRequested: mail.nextPage()
+                    onHelpRequested: root.toggleHelp()
+                }
+                Rectangle { Layout.fillHeight: true; width: 1; color: Color.foreground; opacity: 0.15 }
+                ReaderPane {
+                    id: readerPane
+                    panelWidth: content.width
+                    message: mail.message
+                    folderName: mail.folderName
+                    listError: mail.listError
+                    actionError: mail.actionError
+                    foldersError: mail.foldersError
+                    reading: mail.reading
+                    readError: mail.readError
+                    accountLabel: mail.accountLabel
+                    savingAttachment: mail.savingAttachment
+                    attachmentStatus: mail.attachmentStatus
+                    icons: root.icons
+                    showHeaders: root.showHeaders
+                    showAttachments: root.showAttachments
+                    showLinks: root.showLinks
+                    busy: root.busy
+                    displayedEnvelope: root.displayedEnvelope
+                    messageAttachments: root.messageAttachments
+                    messageLinks: root.messageLinks
+                    linkIndex: root.linkIndex
+                    selectedLink: root.selectedLink
+                    attachmentIndex: root.attachmentIndex
+                    selectedAttachment: root.selectedAttachment
+                    onHeadersRequested: root.toggleHeaders()
+                    onAttachmentsRequested: root.toggleAttachments()
+                    onLinksRequested: root.toggleLinks()
+                    onMarkRequested: function(seen) { root.markMessage(mail.selectedId, seen) }
+                    onDeleteRequested: root.requestDelete(mail.selectedId)
+                    onCloseRequested: root.close()
+                    onAttachmentSelected: function(index) { if (root.busy) return; if (!root.showAttachments) root.toggleAttachments(); root.attachmentIndex = index }
+                    onLinkSelected: function(index) { root.linkIndex = index; readerPane.focusLinks() }
+                    onOpenLinkRequested: root.openLink()
+                    onAttachmentMoved: function(delta) { root.moveAttachment(delta) }
+                    onAttachmentActionRequested: function(openAfter) { root.attachmentAction(openAfter) }
+                    onReaderFocused: { if (mail.selectedId) root.pane = "reader" }
+                }
             }
-            Rectangle {
+            DeleteConfirmation {
                 id: deleteOverlay
-                objectName: "deleteConfirmation"
+                snapshot: root.deleteSnapshot
+                demo: mail.demo
+                busy: root.busy
                 visible: root.confirmingDelete
-                anchors.fill: parent
-                z: 20
-                color: Color.background
-                border.color: Color.accent
                 // No focused background button or TextArea receives modal keys.
                 Keys.onPressed: function(event) { event.accepted = root.opened && root.confirmingDelete }
-                MouseArea { anchors.fill: parent }
-                ColumnLayout {
-                    anchors.centerIn: parent
-                    width: Math.max(0, parent.width - 48)
-                    spacing: 14
-                    MailLabel { text: "Permanently remove this message?"; font.pixelSize: 16; font.bold: true }
-                    MailLabel {
-                        Layout.fillWidth: true
-                        text: root.deleteSnapshot ? "Account: " + (root.deleteSnapshot.account || (mail.demo ? "Demo" : "Default account (explicit account required)")) +
-                            "\nFolder: " + root.deleteSnapshot.folderName + " [" + (root.deleteSnapshot.folder || "configured Inbox") + "]" +
-                            "\nID: " + root.deleteSnapshot.id + "\nSubject: " + root.deleteSnapshot.subject : ""
-                        wrapMode: Text.WrapAnywhere
-                        maximumLineCount: 6
-                        elide: Text.ElideRight
-                    }
-                    MailLabel {
-                        Layout.fillWidth: true
-                        text: "Request permanent removal from Trash. Without IMAP UIDPLUS, Himalaya may only flag the message Deleted pending expunge. Its configured Trash policy remains authoritative. Jitsmail does not expunge."
-                        wrapMode: Text.Wrap
-                    }
-                    MailLabel { visible: mail.demo; text: "Demo only: no real mail changes; refresh restores fixtures."; Layout.fillWidth: true; wrapMode: Text.Wrap }
-                    MailLabel { text: "Enter confirms · h / Esc cancels" }
-                    RowLayout {
-                        MailButton { objectName: "cancelDelete"; text: "Cancel"; focusable: false; onClicked: root.cancelDelete() }
-                        MailButton { objectName: "confirmDelete"; text: "Delete"; focusable: false; enabled: !root.busy; onClicked: root.confirmDelete() }
-                    }
-                }
+                onCancelRequested: root.cancelDelete()
+                onConfirmRequested: root.confirmDelete()
             }
-            Rectangle {
+            FolderPicker {
                 id: folderOverlay
-                objectName: "folderMenu"
                 visible: root.showFolders
-                z: 11
-                // A sibling overlay stays interactive while mailbox controls are disabled.
-                x: sidebar.x + accountFlow.x + folderButton.x
-                y: sidebar.y + accountFlow.y + folderButton.y + folderButton.height + 2
-                width: Math.min(180, parent.width - x)
-                height: Math.max(0, Math.min(322, parent.height - y,
-                    mail.folders.length * 32 + 2 + (movePickerTitle.visible ? movePickerTitle.implicitHeight + 12 : 0) +
-                    (folderStatus.visible ? folderStatus.implicitHeight + 12 : 0) +
-                    (folderRetry.visible ? folderRetry.implicitHeight + 4 : 0)))
-                color: Color.background
-                border.color: Color.accent
-                MouseArea { anchors.fill: parent }
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 1
-                    spacing: 0
-                    MailLabel {
-                        id: movePickerTitle
-                        Layout.fillWidth: true
-                        Layout.margins: 6
-                        visible: root.movePicker
-                        text: "Move message to…"
-                        font.pixelSize: 11
-                        color: Color.accent
-                    }
-                    MailLabel {
-                        id: folderStatus
-                        Layout.fillWidth: true
-                        Layout.margins: 6
-                        visible: mail.foldersLoading || !!mail.foldersError || !mail.folders.length
-                        text: mail.foldersLoading ? "Loading folders…" : mail.foldersError || "No folders available."
-                        font.pixelSize: 11
-                        wrapMode: Text.WrapAnywhere
-                        maximumLineCount: 3
-                        elide: Text.ElideRight
-                        color: Color.accent
-                    }
-                    ListView {
-                        id: folderList
-                        objectName: "folderPicker"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
-                        spacing: 0
-                        model: mail.folders
-                        ScrollBar.vertical: ScrollBar {}
-                        delegate: Rectangle {
-                            required property var modelData
-                            required property int index
-                            width: folderList.width
-                            height: 32
-                            color: index === root.folderIndex ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.09) : "transparent"
-                            opacity: root.movePicker && root.isCurrentFolder(modelData) ? 0.4 : 1
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 8
-                                anchors.rightMargin: 8
-                                spacing: 8
-                                MailLabel { Layout.preferredWidth: 14; text: root.folderIcon(modelData); color: Color.accent }
-                                MailLabel { Layout.fillWidth: true; text: modelData.name; elide: Text.ElideRight }
-                            }
-                            MouseArea {
-                                anchors.fill: parent
-                                enabled: !root.switchingBlocked && !mail.foldersLoading
-                                onClicked: { root.folderIndex = index; root.chooseFolder() }
-                            }
-                        }
-                    }
-                    MailButton {
-                        id: folderRetry
-                        Layout.fillWidth: true
-                        Layout.margins: 2
-                        visible: !mail.foldersLoading && (!!mail.foldersError || !mail.folders.length)
-                        text: "Retry (r)"
-                        enabled: !root.switchingBlocked
-                        onClicked: mail.loadFolders()
-                    }
-                }
+                folderId: mail.folderId
+                x: sidebar.x + sidebar.folderAnchor.x
+                y: sidebar.y + sidebar.folderAnchor.y
+                movePicker: root.movePicker
+                currentIndex: root.folderIndex
+                switchingBlocked: root.switchingBlocked
+                loading: mail.foldersLoading
+                error: mail.foldersError
+                folders: mail.folders
+                icons: root.icons
+                onFolderChosen: function(index) { root.folderIndex = index; root.chooseFolder() }
+                onRetryRequested: mail.loadFolders()
             }
-            Rectangle {
+            ShortcutHelp {
                 id: helpOverlay
                 visible: root.showHelp
-                z: 10
-                anchors.left: parent.left
-                anchors.leftMargin: Math.min(68, parent.width * 0.08)
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: 32
-                width: Math.min(360, parent.width - anchors.leftMargin)
-                height: Math.min(helpContent.implicitHeight + 24, parent.height - 40)
-                color: Color.background
-                border.color: Color.accent
-                border.width: 1
-                // Help floats over the inbox and never changes pane geometry.
-                MouseArea { anchors.fill: parent }
-                ScrollView {
-                    id: helpScroll
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    clip: true
-                    contentWidth: availableWidth
-                    ColumnLayout {
-                        id: helpContent
-                        width: helpScroll.availableWidth
-                        spacing: 8
-                        RowLayout {
-                            Layout.fillWidth: true
-                            MailLabel { Layout.fillWidth: true; text: "SHORTCUTS"; font.pixelSize: 10; font.letterSpacing: 1.5; opacity: 0.55 }
-                            MailButton { iconText: root.icons.close; tooltipText: "Close help (Esc)"; onClicked: root.showHelp = false }
-                        }
-                        Repeater {
-                            model: [
-                                ["j k / ↓ ↑", "Move / scroll"],
-                                ["Enter / l / →", "Open message / link"],
-                                ["h / ←", "Back to body / list"],
-                                ["Tab", "Switch list / reader"],
-                                ["gg / G", "First / last"],
-                                ["Ctrl+d / u", "Half-page down / up"],
-                                ["n / p", "Older / newer page"],
-                                ["[ / ]", "Switch account"],
-                                ["f", "Choose folder · r retry"],
-                                ["gi / gs", "Inbox / sent"],
-                                ["ga / gt", "Archive / trash"],
-                                ["o", "Show / hide links"],
-                                ["v", "Full selectable headers"],
-                                ["a", "Attachments: j/k select"],
-                                ["s / Enter", "Save / open attachment (in a)"],
-                                ["M", "Move message to folder"],
-                                ["x / Shift+X", "Archive / trash · immediately"],
-                                ["Delete", "Trash · in Trash, confirm removal"],
-                                ["m / u", "Mark read / unread"],
-                                ["r", "Refresh folder"],
-                                ["Ctrl+c", "Copy selected text"],
-                                ["?", "Toggle shortcuts"],
-                                ["Esc", "Dismiss / back / close"],
-                                ["q", "Close mail"]
-                            ]
-                            RowLayout {
-                                required property var modelData
-                                Layout.fillWidth: true
-                                spacing: 8
-                                MailLabel { Layout.preferredWidth: 110; text: modelData[0]; font.pixelSize: 11 }
-                                MailLabel { Layout.fillWidth: true; text: modelData[1]; opacity: 0.6; font.pixelSize: 11; wrapMode: Text.Wrap }
-                            }
-                        }
-                    }
-                }
+                icons: root.icons
+                onDismissed: root.showHelp = false
             }
         }
     }

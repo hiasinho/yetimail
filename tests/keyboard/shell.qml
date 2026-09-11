@@ -62,6 +62,25 @@ ShellRoot {
                 widget.focusList()
                 wait(50)
             }
+            function test_presentation_lifetime() {
+                press(Qt.Key_Return)
+                var originalBody = area
+                var originalReader = scroll
+                var menu = find(widget, function(item) { return item.objectName === "folderMenu" })
+                var confirmation = find(widget, function(item) { return item.objectName === "deleteConfirmation" })
+                check(menu.parent === confirmation.parent, "modal overlays remain siblings")
+                for (var key of [Qt.Key_O, Qt.Key_H, Qt.Key_V, Qt.Key_A,
+                        Qt.Key_H, Qt.Key_Question, Qt.Key_Escape, Qt.Key_F, Qt.Key_Escape]) press(key)
+                press(Qt.Key_Q)
+                widget.opened = true; wait(50)
+                equal(find(widget, function(item) { return item.objectName === "messageBody" }), originalBody,
+                    "mode changes and reopening preserve the TextArea instance")
+                equal(find(widget, function(item) { return item.objectName === "messageReader" }), originalReader,
+                    "mode changes and reopening preserve the ScrollView instance")
+                equal(area.textFormat, TextEdit.PlainText, "reader remains plain text")
+                equal(mail.calls.filter(function(call) { return call.operation === "read" }).length, 1,
+                    "presentation mode changes never reread mail")
+            }
             function test_delete_confirmation() {
                 mail.folderId = "Trash"; widget.syncCursor()
                 press(Qt.Key_J); press(Qt.Key_Delete)
@@ -500,12 +519,21 @@ ShellRoot {
                 var chips = find(widget, function(item) { return item.objectName === "attachmentChips" })
                 check(chips.visible, "metadata chips visible")
                 check(chips.height <= 36, "chips have bounded height")
-                equal(widget.attachmentSize(0), "0 B")
-                equal(widget.attachmentSize(null), "Unknown size")
-                equal(widget.attachmentSize(1536), "1.5 KiB")
-                equal(widget.attachmentSize(2097152), "2.0 MiB")
                 press(Qt.Key_H); press(Qt.Key_A)
                 check(widget.showAttachments); equal(widget.pane, "reader"); check(area.activeFocus)
+                check(area.text.indexOf("1.5 KiB") !== -1)
+                press(Qt.Key_J); check(area.text.indexOf("0 B") !== -1)
+                press(Qt.Key_J); check(area.text.indexOf("Unknown size") !== -1)
+                press(Qt.Key_J); check(area.text.indexOf("2.0 MiB") !== -1)
+                press(Qt.Key_G); press(Qt.Key_G)
+                // A chip emits selection upward; later keyboard changes must still
+                // reach the same presentation instance (no broken input binding).
+                var secondChip = chips.itemAtIndex(1)
+                check(secondChip !== null)
+                mouseClick(secondChip, secondChip.width / 2, secondChip.height / 2); wait(30)
+                equal(widget.attachmentIndex, 1)
+                press(Qt.Key_K); equal(widget.attachmentIndex, 0)
+                check(area.text.indexOf("reference.pdf") !== -1)
                 check(area.readOnly && area.selectByMouse, "details selectable and read-only")
                 check(area.text.indexOf("1536 bytes") !== -1, "exact decoded size retained")
                 press(Qt.Key_G, Qt.ShiftModifier)
@@ -635,7 +663,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 18)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 19)
                     console.log("JITSMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

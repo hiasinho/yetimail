@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline real-Shortcut tests. Only Widget is copied; MailService is an inert fixture.
+# Offline real-Shortcut tests. Production presentation; MailService is an inert fixture.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 omarchy_shell=${OMARCHY_SHELL_PATH:-/usr/share/omarchy/shell}
@@ -13,6 +13,7 @@ for source in "$omarchy_shell"/Ui/*; do
 done
 cp "$root/tests/keyboard/KeyboardPanel.qml" "$work/Ui/KeyboardPanel.qml"
 cp "$root/Widget.qml" "$work/Jitsmail/Widget.qml"
+cp -R "$root/ui" "$work/Jitsmail/ui"
 cp "$root/tests/keyboard/MailService.qml" "$work/Jitsmail/MailService.qml"
 cp "$root/tests/keyboard/shell.qml" "$work/shell.qml"
 # No production helper is present, and no executable can be found via PATH.

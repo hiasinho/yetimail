@@ -149,6 +149,7 @@ scripts/test-moves
 scripts/test-deletions
 scripts/test-keyboard
 scripts/test-attachments
+scripts/test-prefetch
 bin/jitsmail-helper list --demo
 bin/jitsmail-helper read --demo --id demo-1
 ```
@@ -161,7 +162,7 @@ Deletion tests cover safe CLI arguments, explicit-account and mailbox guards, sy
 
 Attachment tests cover safe extraction, private unique writes in temporary homes, traversal/symlink defenses, runnable-type restrictions, and service save/open guards with offline fixtures. No tests open real attachments or alter real mail flags.
 
-Pagination tests exercise the actual service with offline fixtures and demo data, including failed requests and stale account results. Keyboard tests send real Qt key events to the production widget, including navigation while its TextArea has focus; only the backend and compositor popup are replaced. Install Qt's QML `QtTest` module to run keyboard tests.
+Pagination tests exercise the actual service with offline fixtures and demo data, including failed requests and stale account results. Keyboard tests send real Qt key events to the production widget and `ui/` components, including navigation while the TextArea has focus, mouse-to-keyboard attachment selection, stable reader lifetime, and folder anchor geometry. The harness copies `Widget.qml` and `ui/` together; only the backend and compositor popup are replaced, with no production helper staged. Install Qt's QML `QtTest` module to run keyboard tests.
 
 For an interactive demo:
 
@@ -184,8 +185,13 @@ The reference-inspired layout uses a compact monospace sidebar, bordered account
 
 ```text
 Widget.qml → MailService.qml → bin/jitsmail-helper → Himalaya → IMAP
-  UI            async JSON       normalization
+  commands      async JSON       normalization
+  ↕ data / signals
+ui/*.qml
+  presentation
 ```
+
+`Widget.qml` remains the BarWidget shell integration and sole interaction coordinator: it owns keyboard commands, selection and reader modes, modal guards, deletion snapshots, mutation coordination, and service/external-link calls. `ui/InboxPane.qml` and `ui/ReaderPane.qml` render independent data inputs and emit user-intent signals; their imperative APIs only focus, reveal rows, or scroll. `ui/FolderPicker.qml`, `ui/DeleteConfirmation.qml`, and `ui/ShortcutHelp.qml` are stable sibling overlays, not children of disabled mailbox controls. The inbox exposes the folder button's anchor geometry so the picker stays directly beneath it. `ui/MailLabel.qml` and `ui/MailButton.qml` share the monospace presentation defaults; labels and selectable message text remain plain text. Components never receive the widget/controller or call MailService, and no loaders recreate panes on mode changes.
 
 The adapter executes argument arrays, never shell command strings. Account credentials stay under Himalaya's control. The helper suppresses backend stderr in UI errors because it may contain private configuration details. For connection errors, troubleshoot with Himalaya directly in a private terminal.
 

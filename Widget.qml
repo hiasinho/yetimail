@@ -10,6 +10,27 @@ BarWidget {
     implicitWidth: button.implicitWidth
     implicitHeight: button.implicitHeight
     property bool opened: false
+    // Material Design icons bundled with Omarchy's Nerd Font.
+    readonly property var icons: ({
+        mail: "󰇰",
+        inbox: "󰚇",
+        sent: "󰒊",
+        drafts: "󰷉",
+        archive: "󱈎",
+        junk: "󰀪",
+        trash: "󰩺",
+        folder: "󰉖",
+        attachment: "󰏢",
+        headers: "󰷐",
+        link: "󰏌",
+        read: "󰄬",
+        unread: "󰧞",
+        close: "󰅖",
+        previous: "󰅁",
+        next: "󰅂",
+        refresh: "󰑐",
+        delete: "󰧧"
+    })
     // An explicit allowlist avoids discovering/querying unrelated accounts.
     readonly property var accounts: String(setting("accounts", "")).split(",").map(function(name) {
         return name.trim()
@@ -119,13 +140,13 @@ BarWidget {
     }
     function folderIcon(folder) {
         var name = String(folder.role || folder.name || "").toLowerCase()
-        if (name === "inbox") return "✉"
-        if (name === "sent" || name === "sent mail" || name === "sent items") return "➤"
-        if (name === "draft" || name === "drafts") return "✎"
-        if (name === "archive" || name === "archives") return "▣"
-        if (name === "junk" || name === "spam") return "⚠"
-        if (name === "trash" || name === "deleted items") return "▥"
-        return "▱"
+        if (name === "inbox") return icons.inbox
+        if (name === "sent" || name === "sent mail" || name === "sent items") return icons.sent
+        if (name === "draft" || name === "drafts") return icons.drafts
+        if (name === "archive" || name === "archives") return icons.archive
+        if (name === "junk" || name === "spam") return icons.junk
+        if (name === "trash" || name === "deleted items") return icons.trash
+        return icons.folder
     }
     function moveFolder(delta) {
         folderIndex = Math.max(0, Math.min(mail.folders.length - 1, folderIndex + delta))
@@ -397,7 +418,7 @@ BarWidget {
         id: button
         anchors.fill: parent
         bar: root.bar
-        text: "✉" + (mail.listError ? " !" : mail.unread ? " " + mail.unread : "")
+        text: root.icons.mail + (mail.listError ? " !" : mail.unread ? " " + mail.unread : "")
         tooltipText: "Jitsmail · " + mail.accountLabel + " · " + (mail.listError ? "Refresh failed" : mail.unread + " unread on page " + mail.page)
         onPressed: { root.opened = !root.opened; if (root.opened) mail.refresh() }
     }
@@ -474,7 +495,7 @@ BarWidget {
                             MailLabel { text: mail.demo ? "MAIL / DEMO" : "MAIL"; font.pixelSize: 10; font.letterSpacing: 1.5; opacity: 0.55 }
                             MailLabel { Layout.fillWidth: true; text: mail.unread + " unread"; font.pixelSize: 14 }
                         }
-                        MailButton { text: mail.loading ? "…" : "Refresh"; tooltipText: "Refresh (r)"; enabled: !root.busy; onClicked: mail.refresh() }
+                        MailButton { text: mail.loading ? "…" : "Refresh"; iconText: mail.loading ? "" : root.icons.refresh; tooltipText: "Refresh (r)"; enabled: !root.busy; onClicked: mail.refresh() }
                     }
                     Flow {
                         id: accountFlow
@@ -483,7 +504,7 @@ BarWidget {
                         MailButton {
                             id: folderButton
                             objectName: "folderButton"
-                            text: "✉"
+                            iconText: root.icons.inbox
                             tooltipText: mail.folderName + " · Choose folder (f)"
                             bordered: true
                             selected: root.showFolders
@@ -522,7 +543,7 @@ BarWidget {
                                 color: modelData.id === root.cursorId ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.14) : mouse.containsMouse ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.07) : "transparent"
                                 MailLabel {
                                     x: 7; y: 9
-                                    text: "●"
+                                    text: root.icons.unread
                                     font.pixelSize: 9
                                     color: Color.accent
                                     visible: modelData.unread
@@ -564,9 +585,9 @@ BarWidget {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            MailButton { text: "‹ Newer"; tooltipText: "Previous page (p)"; enabled: mail.page > 1 && !root.busy; onClicked: mail.previousPage() }
+                            MailButton { text: "Newer"; iconText: root.icons.previous; tooltipText: "Previous page (p)"; enabled: mail.page > 1 && !root.busy; onClicked: mail.previousPage() }
                             MailLabel { Layout.fillWidth: true; text: "Page " + mail.page; horizontalAlignment: Text.AlignHCenter; opacity: 0.55; font.pixelSize: 10 }
-                            MailButton { text: "Older ›"; tooltipText: "Next page (n)"; enabled: mail.hasNext && !root.busy; onClicked: mail.nextPage() }
+                            MailButton { text: "Older"; iconText: root.icons.next; tooltipText: "Next page (n)"; enabled: mail.hasNext && !root.busy; onClicked: mail.nextPage() }
                         }
                         RowLayout {
                             Layout.fillWidth: true
@@ -582,13 +603,13 @@ BarWidget {
                             Layout.fillWidth: true
                             spacing: 2
                             MailLabel { Layout.fillWidth: true; Layout.minimumWidth: 0; text: mail.message ? mail.message.subject || "(No subject)" : mail.folderName; font.pixelSize: 16; font.bold: true; elide: Text.ElideRight }
-                            MailButton { text: "≡"; tooltipText: "Full selectable headers (v)"; selected: root.showHeaders; enabled: !!mail.message && !root.busy; onClicked: root.toggleHeaders() }
-                            MailButton { text: "📎"; tooltipText: "Attachment metadata (a)"; selected: root.showAttachments; enabled: !!mail.message && !root.busy; onClicked: root.toggleAttachments() }
-                            MailButton { text: "↗"; tooltipText: "Show links (o)"; selected: root.showLinks; enabled: !!mail.message && !root.busy; onClicked: root.toggleLinks() }
-                            MailButton { objectName: "readerMarkRead"; text: "✓"; tooltipText: "Mark this message read (m)"; enabled: !!mail.message && !!root.displayedEnvelope && root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, true) }
-                            MailButton { objectName: "readerMarkUnread"; text: "●"; tooltipText: "Mark this message unread (u)"; enabled: !!mail.message && !!root.displayedEnvelope && !root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, false) }
-                            MailButton { objectName: "readerDelete"; text: "Delete"; tooltipText: "Trash this message (Delete) · in Trash, confirm removal"; enabled: !!mail.message && !!root.displayedEnvelope && !root.busy; onClicked: root.requestDelete(mail.selectedId) }
-                            MailButton { text: "×"; tooltipText: "Close (q)"; onClicked: root.close() }
+                            MailButton { iconText: root.icons.headers; tooltipText: "Full selectable headers (v)"; selected: root.showHeaders; enabled: !!mail.message && !root.busy; onClicked: root.toggleHeaders() }
+                            MailButton { iconText: root.icons.attachment; tooltipText: "Attachment metadata (a)"; selected: root.showAttachments; enabled: !!mail.message && !root.busy; onClicked: root.toggleAttachments() }
+                            MailButton { iconText: root.icons.link; tooltipText: "Show links (o)"; selected: root.showLinks; enabled: !!mail.message && !root.busy; onClicked: root.toggleLinks() }
+                            MailButton { objectName: "readerMarkRead"; iconText: root.icons.read; tooltipText: "Mark this message read (m)"; enabled: !!mail.message && !!root.displayedEnvelope && root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, true) }
+                            MailButton { objectName: "readerMarkUnread"; iconText: root.icons.unread; tooltipText: "Mark this message unread (u)"; enabled: !!mail.message && !!root.displayedEnvelope && !root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, false) }
+                            MailButton { objectName: "readerDelete"; iconText: root.icons.delete; tooltipText: "Trash this message (Delete) · in Trash, confirm removal"; enabled: !!mail.message && !!root.displayedEnvelope && !root.busy; onClicked: root.requestDelete(mail.selectedId) }
+                            MailButton { iconText: root.icons.close; tooltipText: "Close (q)"; onClicked: root.close() }
                         }
                         MailLabel {
                             objectName: "mailErrors"
@@ -639,7 +660,7 @@ BarWidget {
                                     anchors.fill: parent
                                     anchors.margins: 5
                                     spacing: 5
-                                    MailLabel { text: "📎"; font.pixelSize: 11 }
+                                    MailLabel { text: root.icons.attachment; font.pixelSize: 11 }
                                     MailLabel { Layout.fillWidth: true; Layout.minimumWidth: 0; text: modelData.name || "Unnamed attachment"; elide: Text.ElideMiddle; font.pixelSize: 11 }
                                     MailLabel { text: root.attachmentSize(modelData.size); font.pixelSize: 10; opacity: 0.6 }
                                 }
@@ -721,9 +742,9 @@ BarWidget {
                         RowLayout {
                             visible: root.showAttachments
                             Layout.fillWidth: true
-                            MailButton { text: "‹"; enabled: root.attachmentIndex > 0; onClicked: root.moveAttachment(-1) }
+                            MailButton { iconText: root.icons.previous; enabled: root.attachmentIndex > 0; onClicked: root.moveAttachment(-1) }
                             MailLabel { text: (root.selectedAttachment ? root.attachmentIndex + 1 : 0) + " / " + root.messageAttachments.length }
-                            MailButton { text: "›"; enabled: root.attachmentIndex + 1 < root.messageAttachments.length; onClicked: root.moveAttachment(1) }
+                            MailButton { iconText: root.icons.next; enabled: root.attachmentIndex + 1 < root.messageAttachments.length; onClicked: root.moveAttachment(1) }
                             MailButton { objectName: "saveAttachment"; text: "Save (s)"; enabled: !!root.selectedAttachment && !root.busy; onClicked: root.attachmentAction(false) }
                             MailButton { objectName: "openAttachment"; text: "Open (Enter)"; enabled: !!root.selectedAttachment && !!root.selectedAttachment.openable && !root.busy; onClicked: root.attachmentAction(true) }
                         }
@@ -916,7 +937,7 @@ BarWidget {
                         RowLayout {
                             Layout.fillWidth: true
                             MailLabel { Layout.fillWidth: true; text: "SHORTCUTS"; font.pixelSize: 10; font.letterSpacing: 1.5; opacity: 0.55 }
-                            MailButton { text: "×"; tooltipText: "Close help (Esc)"; onClicked: root.showHelp = false }
+                            MailButton { iconText: root.icons.close; tooltipText: "Close help (Esc)"; onClicked: root.showHelp = false }
                         }
                         Repeater {
                             model: [

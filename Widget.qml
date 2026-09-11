@@ -68,6 +68,7 @@ BarWidget {
         var trash = mail.resolveFolderRole("trash")
         if (!trash) return
         if (trash.id !== mail.folderId) { moveToRole(id, "trash"); return }
+        if (mail.movePending) return
         deleteSnapshot = {account: mail.account, folder: mail.folderId, folderName: mail.folderName,
             id: id, subject: envelope.subject || "(No subject)", generation: mail.generation,
             page: mail.page, listRequest: mail.listRequest, readRequest: mail.readRequest,
@@ -108,7 +109,7 @@ BarWidget {
     }
     onCursorIdChanged: updatePrefetchSelection()
     onPaneChanged: { cancelDelete(false); updatePrefetchSelection() }
-    readonly property bool switchingBlocked: confirmingDelete || mail.deleting || mail.moving || mail.marking || mail.savingAttachment || mail.openingAttachment
+    readonly property bool switchingBlocked: confirmingDelete || mail.deleting || mail.movePending || mail.marking || mail.savingAttachment || mail.openingAttachment
     function toggleFolders() {
         if (switchingBlocked) return
         if (showFolders) { dismissFolders(); return }
@@ -125,10 +126,16 @@ BarWidget {
     }
     function openMovePicker() {
         if (busy || showHelp || showFolders || !targetEnvelope) return
-        var id = targetId
-        toggleFolders()
+        showHelp = false
+        showLinks = false
+        showHeaders = false
+        showAttachments = false
         movePicker = true
-        moveTargetId = id
+        moveTargetId = targetId
+        showFolders = true
+        mail.loadFolders()
+        syncFolderCursor()
+        folderOverlay.focusList()
     }
     function isCurrentFolder(folder) {
         // An empty source is a configured alias, not necessarily the folder
@@ -156,7 +163,7 @@ BarWidget {
         else sidebar.focusList()
     }
     function chooseFolder() {
-        if (!showFolders || switchingBlocked || mail.foldersLoading || !mail.folders[folderIndex]) return
+        if (!showFolders || (!movePicker && switchingBlocked) || mail.foldersLoading || !mail.folders[folderIndex]) return
         var folder = mail.folders[folderIndex]
         if (movePicker) {
             if (busy || isCurrentFolder(folder)) return
@@ -233,7 +240,7 @@ BarWidget {
     readonly property string targetId: pane === "reader" ? mail.selectedId : cursorId
     readonly property var targetEnvelope: mail.messages.find(function(m) { return m.id === root.targetId }) || null
     readonly property var displayedEnvelope: mail.messages.find(function(m) { return m.id === mail.selectedId }) || null
-    readonly property bool busy: mail.deleting || mail.moving || mail.loading || mail.reading || mail.marking || mail.savingAttachment || mail.openingAttachment
+    readonly property bool busy: mail.deleting || mail.loading || mail.reading || mail.marking || mail.movePaused || mail.savingAttachment || mail.openingAttachment
 
     function selectAccount(name) {
         if (accounts.indexOf(name) !== -1 && !switchingBlocked && !showHelp) selectedAccount = name
@@ -448,6 +455,8 @@ BarWidget {
                     hasNext: mail.hasNext
                     deleting: mail.deleting
                     moving: mail.moving
+                    pendingMoves: mail.pendingMoves
+                    movePaused: mail.movePaused
                     marking: mail.marking
                     icons: root.icons
                     busy: root.busy
@@ -465,6 +474,8 @@ BarWidget {
                     onPreviousRequested: mail.previousPage()
                     onNextRequested: mail.nextPage()
                     onHelpRequested: root.toggleHelp()
+                    onRetryMovesRequested: mail.retryMoves()
+                    onCancelMovesRequested: mail.cancelPendingMoves()
                 }
                 Rectangle { Layout.fillHeight: true; width: 1; color: Color.foreground; opacity: 0.15 }
                 ReaderPane {
@@ -525,7 +536,7 @@ BarWidget {
                 y: sidebar.y + sidebar.folderAnchor.y
                 movePicker: root.movePicker
                 currentIndex: root.folderIndex
-                switchingBlocked: root.switchingBlocked
+                switchingBlocked: root.movePicker ? root.busy : root.switchingBlocked
                 loading: mail.foldersLoading
                 error: mail.foldersError
                 folders: mail.folders

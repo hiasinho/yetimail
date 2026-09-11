@@ -56,6 +56,11 @@ Item {
         return true
     }
     property bool moving: false
+    property int pendingMoves: 0
+    property bool movePending: moving || pendingMoves > 0
+    property bool movePaused: false
+    function retryMoves() { record("retryMoves"); movePaused = false; return true }
+    function cancelPendingMoves() { record("cancelMoves"); pendingMoves = 0; movePaused = false; return true }
     function moveMessage(id, destination) {
         record("move", id, destination)
         fixtures = fixtures.filter(function(row) { return row.id !== id })

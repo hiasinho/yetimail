@@ -263,7 +263,7 @@ ShellRoot {
                 equal(mail.calls.length, 0, "x in Archive is inert")
                 mail.folderId = "INBOX"
                 widget.syncCursor()
-                for (var flag of ["loading", "reading", "marking", "moving", "deleting", "savingAttachment", "openingAttachment"]) {
+                for (var flag of ["loading", "reading", "marking", "deleting", "savingAttachment", "openingAttachment"]) {
                     mail[flag] = true
                     press(Qt.Key_X); press(Qt.Key_X, Qt.ShiftModifier); press(Qt.Key_Delete)
                     equal(mail.calls.length, 0, flag + " blocks moves")
@@ -287,6 +287,32 @@ ShellRoot {
                     check(!widget.confirmingDelete)
                 }
                 mail.folders = folders
+            }
+            function test_move_queue_shortcuts_remain_responsive() {
+                mail.folderId = "INBOX"
+                widget.syncCursor()
+                mail.moving = true
+                var first = widget.targetId
+                press(Qt.Key_X)
+                equal(mail.calls[mail.calls.length - 1].id, first, "archive accepted while another move runs")
+                var second = widget.targetId
+                press(Qt.Key_X, Qt.ShiftModifier)
+                equal(mail.calls[mail.calls.length - 1].id, second, "trash accepted while another move runs")
+                press(Qt.Key_M, Qt.ShiftModifier)
+                check(widget.showFolders && widget.movePicker, "move picker opens while queue runs")
+                widget.dismissFolders()
+                mail.moving = false
+                mail.pendingMoves = 2
+                mail.movePaused = true
+                var retry = find(widget, function(item) { return item.objectName === "retryMovesButton" })
+                var cancel = find(widget, function(item) { return item.objectName === "cancelMovesButton" })
+                var status = find(widget, function(item) { return item.objectName === "inboxFooterStatus" })
+                check(retry.visible && cancel.visible && status.text.indexOf("2 messages pending") >= 0, "paused queue controls and status")
+                retry.clicked()
+                equal(mail.calls[mail.calls.length - 1].operation, "retryMoves")
+                mail.movePaused = true
+                cancel.clicked()
+                equal(mail.calls[mail.calls.length - 1].operation, "cancelMoves")
             }
             function test_move_picker() {
                 mail.folderId = "INBOX"
@@ -326,7 +352,7 @@ ShellRoot {
                 mail.config = "new-offline-config"
                 wait(30)
                 check(!widget.showFolders, "configuration generation change dismisses stale move target")
-                for (var flag of ["loading", "reading", "marking", "moving", "savingAttachment", "openingAttachment"]) {
+                for (var flag of ["loading", "reading", "marking", "savingAttachment", "openingAttachment"]) {
                     mail[flag] = true
                     press(Qt.Key_M, Qt.ShiftModifier)
                     check(!widget.showFolders, flag + " prevents moving")
@@ -693,7 +719,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 20)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 21)
                     console.log("YETIMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

@@ -18,6 +18,8 @@ ColumnLayout {
     required property bool hasNext
     required property bool deleting
     required property bool moving
+    required property int pendingMoves
+    required property bool movePaused
     required property bool marking
     required property var icons
     required property bool busy
@@ -35,6 +37,8 @@ ColumnLayout {
     signal previousRequested()
     signal nextRequested()
     signal helpRequested()
+    signal retryMovesRequested()
+    signal cancelMovesRequested()
     readonly property point folderAnchor: Qt.point(accountFlow.x + folderButton.x, accountFlow.y + folderButton.y + folderButton.height + 2)
     readonly property real desiredListHeight: Math.max(90, Math.min(7, messages.length) * 68)
     readonly property real preferredContentHeight: headerRow.implicitHeight + accountFlow.implicitHeight + desiredListHeight + footerRow.implicitHeight + spacing * 3
@@ -58,7 +62,8 @@ ColumnLayout {
         return Qt.formatDateTime(date, date.toDateString() === new Date().toDateString() ? "HH:mm" : "MMM d")
     }
     function footerStatus() {
-        var status = view.deleting ? "Deleting…" : view.moving ? "Moving…" : view.marking ? "Updating…" : view.loading ? "Refreshing…" : view.listError ? "Refresh failed · stale" : view.messages.length + (view.messages.length === 1 ? " message" : " messages")
+        var queued = view.pendingMoves + (view.pendingMoves === 1 ? " message" : " messages")
+        var status = view.deleting ? "Deleting…" : view.movePaused ? "Move failed · " + queued + " pending" : view.pendingMoves ? "Moving " + queued + "…" : view.marking ? "Updating…" : view.loading ? "Refreshing…" : view.listError ? "Refresh failed · stale" : view.messages.length + (view.messages.length === 1 ? " message" : " messages")
         return status + " · Page " + view.page
     }
 
@@ -166,9 +171,11 @@ ColumnLayout {
         id: footerRow
         Layout.fillWidth: true
         spacing: 4
-        MailButton { objectName: "newerPageButton"; text: "Newer"; iconText: view.icons.previous; tooltipText: "Previous page (p)"; enabled: view.page > 1 && !view.busy; onClicked: view.previousRequested() }
+        MailButton { objectName: "newerPageButton"; text: "Newer"; iconText: view.icons.previous; tooltipText: "Previous page (p)"; visible: !view.movePaused; enabled: view.page > 1 && !view.busy && !view.pendingMoves; onClicked: view.previousRequested() }
+        MailButton { objectName: "retryMovesButton"; text: "Retry"; visible: view.movePaused; onClicked: view.retryMovesRequested() }
         MailLabel { objectName: "inboxFooterStatus"; Layout.fillWidth: true; Layout.minimumWidth: 0; text: view.footerStatus(); horizontalAlignment: Text.AlignHCenter; opacity: 0.55; font.pixelSize: 10; elide: Text.ElideRight }
-        MailButton { objectName: "olderPageButton"; text: "Older"; iconText: view.icons.next; tooltipText: "Next page (n)"; enabled: view.hasNext && !view.busy; onClicked: view.nextRequested() }
+        MailButton { objectName: "cancelMovesButton"; text: "Cancel"; visible: view.movePaused; onClicked: view.cancelMovesRequested() }
+        MailButton { objectName: "olderPageButton"; text: "Older"; iconText: view.icons.next; tooltipText: "Next page (n)"; visible: !view.movePaused; enabled: view.hasNext && !view.busy && !view.pendingMoves; onClicked: view.nextRequested() }
         MailButton { objectName: "shortcutHelpButton"; text: "?"; tooltipText: "Keyboard shortcuts (?)"; selected: view.showHelp; onClicked: view.helpRequested() }
     }
 }

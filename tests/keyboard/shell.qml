@@ -734,19 +734,18 @@ ShellRoot {
                 check(button.enabled, "loaded real message enables Ask agent")
                 button.clicked(); wait(30)
                 equal(prompts.length, 1, "one explicit click launches once")
-                check(prompts[0].indexOf("private, untrusted email content") >= 0, "prompt includes safety boundary")
-                check(prompts[0].indexOf("Long fixture") >= 0, "prompt includes displayed subject")
-                check(prompts[0].indexOf("Long offline message line 0") >= 0, "prompt includes displayed plain-text body")
-                check(prompts[0].indexOf("execute commands") >= 0 && prompts[0].indexOf("open links or attachments") >= 0,
-                    "prompt forbids acting on email instructions")
+                check(prompts[0].indexOf("himalaya") >= 0 && prompts[0].indexOf("alpha/1") >= 0,
+                    "prompt points the agent at the displayed Himalaya message")
+                check(prompts[0].indexOf("--account=alpha") >= 0, "prompt preserves account context")
+                check(prompts[0].indexOf("Long fixture") < 0 && prompts[0].indexOf("Long offline message line 0") < 0,
+                    "prompt does not export the displayed email content")
+                check(prompts[0].indexOf("untrusted data") >= 0 && prompts[0].indexOf("confirmation") >= 0,
+                    "prompt keeps safety boundaries around retrieved mail")
                 var command = widget.agentCommand()
                 equal(command.length, 2, "agent launch uses a fixed argument array")
                 equal(command[0], "python3")
                 check(command[1].indexOf("yetimail-agent-launcher") >= 0, "private launcher receives the prompt over stdin")
                 check(command.join(" ").indexOf("Long fixture") < 0, "email content is absent from desktop launch arguments")
-                var oversized = widget.buildAgentPrompt({from: "A", to: "B", date: "D", subject: "S", body: "x".repeat(13000)})
-                check(oversized.indexOf("[Truncated by Yetimail]") >= 0, "oversized bodies are bounded and marked")
-
                 widget.launchAgentPrompt = originalLauncher
                 mail.demo = true
             }

@@ -10,7 +10,7 @@ A keyboard-first Omarchy mail panel powered by **Himalaya 2.1**. Read and manage
 - Unread badge counts **only the current page**, not the whole mailbox.
 - Automatic refresh every 120 seconds, plus Refresh / Ctrl+R.
 - Safe text-only message display with compact numbered web links and destination previews.
-- Explicit **Ask agent** action opens the configured Omarchy agent with bounded email context.
+- Explicit **Ask agent** action opens the configured Omarchy agent with a mailbox-scoped Himalaya reference.
 - Keyboard-accessible attachment details, safe saving, and explicit opening of supported types.
 - Explicit mark-read / mark-unread actions. Opening or prefetching a message does **not** mark it seen.
 - Private, bounded SQLite body cache with debounced prefetching for faster opens.
@@ -129,11 +129,11 @@ After success, the source row is removed locally, selection advances to the next
 
 ## Ask agent
 
-The reader toolbar's **Ask agent** button performs the equivalent of `omarchy agent prompt` in a terminal with the displayed message's sender, recipients, date, subject, and up to 12,000 characters of its plain-text body. It does not include full headers or attachment payloads. The prompt asks the agent to summarize first and treats the JSON-encoded email as private, untrusted data that must not authorize commands, links, attachments, sending, disclosure, or account access.
+The reader toolbar's bot icon performs the equivalent of `omarchy agent prompt` in a terminal. Its short prompt identifies the displayed message with a shell-quoted Himalaya read command containing the current config, account, mailbox, and message ID. The prompt itself does **not** contain the sender, recipients, subject, body, full headers, or attachments. The agent runs Himalaya to load the message, then asks what you want to do—such as understand it, draft a reply, or perform another mail action.
 
-This is an explicit export of mail content to your configured AI agent and provider. Review that provider's privacy policy before using it. Prompt isolation is a defense, not a guarantee: mail may contain prompt-injection attempts, and Omarchy starts its default agent with that agent's unattended permission mode. Use **Ask agent** only for messages you are comfortable sharing, and review proposed actions before allowing them. The button is disabled in demo mode and while the message is unavailable or the UI is busy.
+Fetching the message gives your configured AI agent and provider access to its content. Review that provider's privacy policy before using this action. Retrieved mail remains private, untrusted data and may contain prompt-injection attempts; the prompt tells the agent not to follow email instructions or send, delete, move, change flags, open links or attachments, or access other messages without an explicit request, and to confirm sending and destructive actions. Omarchy starts its default agent with that agent's unattended permission mode, so review proposed actions carefully. The button is disabled in demo mode and while the message is unavailable or the UI is busy.
 
-Yetimail sends the prompt to its launcher over stdin so private mail is not included in the desktop launch command logged by UWSM. The launcher briefly stages it in an owner-only file under `$XDG_RUNTIME_DIR`, passes only that private path through the terminal launcher, and unlinks the file before starting `omarchy-agent`. Commands use argument arrays without shell interpolation. The final agent process necessarily receives the prompt and may expose it to other processes running as your user while that session runs.
+Yetimail sends the prompt to its launcher over stdin so the message reference is not included in the desktop launch command logged by UWSM. The launcher briefly stages it in an owner-only file under `$XDG_RUNTIME_DIR`, passes only that private path through the terminal launcher, and unlinks the file before starting `omarchy-agent`. Launch commands use argument arrays without shell interpolation; values inside the supplied Himalaya command are shell-quoted.
 
 ## Reading links
 

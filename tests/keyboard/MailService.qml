@@ -2,6 +2,9 @@ import QtQuick
 
 // Deliberately no Process/import of production service, helper, or account files.
 Item {
+    signal accountConfigSaved(string transaction)
+    signal accountConfigSaveFailed(string transaction)
+    signal accountConfigFenceExpired(string transaction)
     property bool active: false
     property string account: ""
     property string config: ""
@@ -22,13 +25,22 @@ Item {
     property bool accountOverviewLoading: false
     property string accountOverviewError: ""
     property bool accountLabelSaving: false
+    property bool accountConfigSaving: false
+    property bool accountConfigBlocked: false
+    property bool accountConfigRefreshPending: false
+    property string accountConfigFenceToken: ""
+    function prepareAccountConfigSave(transaction) { accountConfigFenceToken = transaction; accountConfigBlocked = true; accountConfigRefreshPending = true }
+    function renewAccountConfigFence(transaction) {}
+    function commitAccountConfigSave(transaction, deferFetch) { if (transaction !== accountConfigFenceToken) return; accountConfigFenceToken = ""; accountConfigBlocked = false; accountConfigRefreshPending = deferFetch }
+    function cancelAccountConfigSave(transaction) { if (transaction !== accountConfigFenceToken) return; accountConfigFenceToken = ""; accountConfigBlocked = false; accountConfigRefreshPending = false }
+    function resumeAccountConfig() { accountConfigRefreshPending = false }
     function loadAccountLabels() {}
     function loadAccountOverview() {
         record("accounts")
         accountOverview = [
-            {id: "alpha", label: accountLabels.alpha || "", email: "alpha@example.test", "display-name": "Alpha Sender", default: true, receiving: ["imap"], sending: ["smtp"]},
-            {id: "beta", label: accountLabels.beta || "", email: "beta@example.test", "display-name": "Beta Sender", default: false, receiving: ["jmap"], sending: ["jmap"]},
-            {id: "configured-only", label: "", email: "extra@example.test", "display-name": "Extra Sender", default: false, receiving: ["imap"], sending: []}
+            {id: "alpha", label: accountLabels.alpha || "", email: "alpha@example.test", "display-name": "Alpha Sender", default: true, receiving: ["imap"], sending: ["smtp"], editable: true, "editable-reason": "", revision: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "mailbox-mappings": {inbox: "INBOX", sent: "Sent", drafts: "Drafts", trash: "Trash", archive: "Archive"}},
+            {id: "beta", label: accountLabels.beta || "", email: "beta@example.test", "display-name": "Beta Sender", default: false, receiving: ["jmap"], sending: ["jmap"], editable: true, "editable-reason": "", revision: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "mailbox-mappings": {inbox: "", sent: "", drafts: "", trash: "", archive: ""}},
+            {id: "configured-only", label: "", email: "extra@example.test", "display-name": "Extra Sender", default: false, receiving: ["imap"], sending: [], editable: false, "editable-reason": "Merged configurations are read-only.", revision: "", "mailbox-mappings": {inbox: "", sent: "", drafts: "", trash: "", archive: ""}}
         ]
     }
     function saveAccountLabel(id, label) {
@@ -43,6 +55,21 @@ Item {
             updated.label = label
             return updated
         })
+        return true
+    }
+    function saveAccountConfig(transaction, id, revision, email, displayName, makeDefault, inbox, sent, drafts, trash, archive) {
+        record("account-save", id, email)
+        accountOverview = accountOverview.map(function(item) {
+            var updated = Object.assign({}, item)
+            if (makeDefault) updated.default = item.id === id
+            if (item.id === id) {
+                updated.email = email
+                updated["display-name"] = displayName
+                updated["mailbox-mappings"] = {inbox: inbox, sent: sent, drafts: drafts, trash: trash, archive: archive}
+            }
+            return updated
+        })
+        accountConfigSaved(transaction)
         return true
     }
     property string folderId: ""

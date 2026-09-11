@@ -3,6 +3,9 @@ import Quickshell.Io
 
 Item {
     id: root
+    signal accountConfigSaved(string transaction)
+    signal accountConfigSaveFailed(string transaction)
+    signal accountConfigFenceExpired(string transaction)
     property bool active: true
     property string account: ""
     property string config: ""
@@ -292,6 +295,12 @@ Item {
     property bool accountOverviewReload: false
     property bool accountOverviewEnabled: false
     property bool accountLabelSaving: false
+    property bool accountConfigSaving: false
+    property bool accountConfigRefreshPending: false
+    property bool accountConfigBlocked: false
+    property string accountConfigFenceToken: ""
+    property int accountConfigRequest: 0
+    property string accountConfigId: ""
     property int accountLabelsRequest: 0
     property string accountLabelId: ""
     // Quickshell's running flips only after launch, so latch requests ourselves.
@@ -581,7 +590,7 @@ Item {
 
     function accountSettingsCommand(operation) {
         var args = ["python3", decodeURIComponent(Qt.resolvedUrl("bin/yetimail-helper").toString().replace(/^file:\/\//, "")), operation]
-        if (config && operation === "accounts") args.push("--config", config)
+        if (config && (operation === "accounts" || operation === "account-save")) args.push("--config", config)
         if (demo) args.push("--demo")
         return args
     }
@@ -593,6 +602,30 @@ Item {
         })
         if (label) entries.push(JSON.stringify(accountId) + ":" + JSON.stringify(label))
         return JSON.parse("{" + entries.join(",") + "}")
+    }
+
+    function applyAccountOverview(data) {
+        if (!data || !Array.isArray(data.accounts)) throw new Error("Invalid account overview from mail helper.")
+        var labels = JSON.parse(JSON.stringify(accountLabels || ({})))
+        var roles = ["inbox", "sent", "drafts", "trash", "archive"]
+        data.accounts.forEach(function(item) {
+            if (!item || typeof item.id !== "string" || !item.id || typeof item.label !== "string"
+                || typeof item.email !== "string" || typeof item["display-name"] !== "string"
+                || typeof item.default !== "boolean" || !Array.isArray(item.receiving) || !Array.isArray(item.sending)
+                || item.receiving.some(function(value) { return typeof value !== "string" })
+                || item.sending.some(function(value) { return typeof value !== "string" })
+                || typeof item.revision !== "string"
+                || (item.editable === true && !/^[0-9a-f]{64}$/.test(item.revision))
+                || (item.editable === false && item.revision !== "")
+                || typeof item.editable !== "boolean" || typeof item["editable-reason"] !== "string"
+                || !item["mailbox-mappings"] || typeof item["mailbox-mappings"] !== "object"
+                || Array.isArray(item["mailbox-mappings"])
+                || roles.some(function(role) { return typeof item["mailbox-mappings"][role] !== "string" }))
+                throw new Error("Invalid account overview from mail helper.")
+            labels = withAccountLabel(labels, item.id, item.label)
+        })
+        accountLabels = labels
+        accountOverview = data.accounts
     }
 
     function loadAccountLabels() {
@@ -612,7 +645,7 @@ Item {
     function loadAccountOverview() {
         accountOverviewEnabled = true
         if (!ready || !active) return
-        if (accountOverviewLoading || accountLabelSaving || accountOverviewProcess.running) {
+        if (accountOverviewLoading || accountLabelSaving || accountConfigSaving || accountOverviewProcess.running) {
             accountOverviewReload = true
             return
         }
@@ -629,7 +662,7 @@ Item {
     }
 
     function saveAccountLabel(accountId, label) {
-        if (!ready || !active || accountOverviewLoading || accountLabelSaving || accountLabelProcess.running
+        if (!ready || !active || accountOverviewLoading || accountLabelSaving || accountConfigSaving || accountLabelProcess.running
             || typeof accountId !== "string" || !accountId || typeof label !== "string") return false
         accountOverviewError = ""
         accountLabelsLoading = false
@@ -642,6 +675,32 @@ Item {
         return true
     }
 
+    function saveAccountConfig(transaction, accountId, revision, email, displayName, makeDefault, inbox, sent, drafts, trash, archive) {
+        if (!ready || !active || accountOverviewLoading || accountLabelSaving || accountConfigSaving
+            || accountConfigProcess.running || typeof transaction !== "string" || !transaction
+            || transaction !== accountConfigFenceToken || typeof accountId !== "string" || !accountId
+            || typeof revision !== "string" || !/^[0-9a-f]{64}$/.test(revision)) return false
+        var accountData = accountOverview.find(function(item) { return item && item.id === accountId })
+        if (!accountData || accountData.editable !== true) return false
+        accountOverviewError = ""
+        accountConfigSaving = true
+        accountConfigId = accountId
+        accountConfigProcess.request = ++accountConfigRequest
+        accountConfigProcess.transaction = transaction
+        accountConfigProcess.contextConfig = config
+        accountConfigProcess.contextDemo = demo
+        accountConfigProcess.command = accountSettingsCommand("account-save").concat([
+            "--account=" + accountId, "--revision=" + revision,
+            "--email=" + String(email), "--display-name=" + String(displayName),
+            "--default=" + String(!!accountData.default || !!makeDefault),
+            "--inbox=" + String(inbox), "--sent=" + String(sent),
+            "--drafts=" + String(drafts), "--trash=" + String(trash),
+            "--archive=" + String(archive)
+        ])
+        accountConfigProcess.running = true
+        return true
+    }
+
     function messageReadCommand(id) {
         var args = command("read").concat(["--id", id])
         var envelope = messages.find(function(m) { return m.id === id })
@@ -650,7 +709,7 @@ Item {
         return args
     }
 
-    function reset(clearFolderCache) {
+    function reset(clearFolderCache, deferFetch) {
         discoveryGeneration++
         restoreFolderCache(!!clearFolderCache)
         foldersError = ""
@@ -658,7 +717,45 @@ Item {
         pendingFolderRole = ""
         folderId = ""
         folderName = "Inbox"
-        resetMessages()
+        resetMessages(!!deferFetch)
+    }
+
+    function prepareAccountConfigSave(transaction) {
+        if (typeof transaction !== "string" || !transaction) return false
+        accountConfigFenceToken = transaction
+        accountConfigBlocked = true
+        accountConfigRefreshPending = true
+        accountConfigFenceTimer.restart()
+        reset(true, true)
+        return true
+    }
+
+    function renewAccountConfigFence(transaction) {
+        if (transaction && transaction === accountConfigFenceToken && accountConfigBlocked)
+            accountConfigFenceTimer.restart()
+    }
+
+    function commitAccountConfigSave(transaction, deferFetch) {
+        if (!transaction || transaction !== accountConfigFenceToken) return
+        accountConfigFenceTimer.stop()
+        accountConfigFenceToken = ""
+        accountConfigBlocked = false
+        accountConfigRefreshPending = !!deferFetch
+        reset(true, !!deferFetch)
+    }
+
+    function cancelAccountConfigSave(transaction) {
+        if (!transaction || transaction !== accountConfigFenceToken) return
+        accountConfigFenceTimer.stop()
+        accountConfigFenceToken = ""
+        accountConfigBlocked = false
+        resumeAccountConfig()
+    }
+
+    function resumeAccountConfig() {
+        if (accountConfigBlocked || !accountConfigRefreshPending) return
+        accountConfigRefreshPending = false
+        if (ready && active) fetchPage(page)
     }
 
     function invalidatePrefetch() {
@@ -697,7 +794,7 @@ Item {
         prefetchProcess.running = true
     }
 
-    function resetMessages() {
+    function resetMessages(deferFetch) {
         invalidatePrefetch()
         generation++
         // Direct account/config/folder changes invalidate unsent queued mutations.
@@ -725,7 +822,7 @@ Item {
         visibleListKey = ""
         listQueue = listQueue.filter(function(job) { return !job.foreground })
         // Memory restoration is synchronous even while another account is fetching.
-        if (ready && active) fetchPage(page)
+        if (ready && active && !deferFetch) fetchPage(page)
     }
 
     function refresh() { fetchPage(page) }
@@ -739,7 +836,7 @@ Item {
     }
 
     function fetchPage(target) {
-        if (!ready || !active || loading || deleting || movePending || marking || (reading && readGeneration === generation && target !== page)) return
+        if (!ready || !active || accountConfigBlocked || loading || deleting || movePending || marking || (reading && readGeneration === generation && target !== page)) return
         if (target !== page) {
             invalidatePrefetch()
             selectedId = ""
@@ -1136,11 +1233,17 @@ Item {
     }
 
     onActiveChanged: reset(false)
-    onAccountChanged: reset(false)
+    onAccountChanged: { accountConfigFenceTimer.stop(); accountConfigFenceToken = ""; accountConfigBlocked = false; accountConfigRefreshPending = false; reset(false) }
     onConfigChanged: {
         accountOverviewRequest++
+        accountConfigRequest++
         accountOverview = []
         accountOverviewLoading = false
+        accountConfigSaving = false
+        accountConfigFenceTimer.stop()
+        accountConfigFenceToken = ""
+        accountConfigBlocked = false
+        accountConfigRefreshPending = false
         accountOverviewError = ""
         reset(true)
         if (active && accountOverviewEnabled) Qt.callLater(loadAccountOverview)
@@ -1148,17 +1251,29 @@ Item {
     onDemoChanged: {
         accountOverviewRequest++
         accountLabelsRequest++
+        accountConfigRequest++
         accountOverview = []
         accountLabels = ({})
         accountOverviewLoading = false
         accountLabelsLoading = false
         accountLabelSaving = false
+        accountConfigSaving = false
+        accountConfigFenceTimer.stop()
+        accountConfigFenceToken = ""
+        accountConfigBlocked = false
+        accountConfigRefreshPending = false
         accountOverviewError = ""
         reset(true)
         if (active) {
             Qt.callLater(loadAccountLabels)
             if (accountOverviewEnabled) Qt.callLater(loadAccountOverview)
         }
+    }
+
+    Timer {
+        id: accountConfigFenceTimer
+        interval: 30000
+        onTriggered: root.accountConfigFenceExpired(root.accountConfigFenceToken)
     }
 
     Process {
@@ -1233,20 +1348,7 @@ Item {
                 return
             }
             try {
-                var data = root.result(accountOverviewOutput.text, code)
-                if (!data || !Array.isArray(data.accounts)) throw new Error("Invalid account overview from mail helper.")
-                var labels = JSON.parse(JSON.stringify(root.accountLabels || ({})))
-                data.accounts.forEach(function(item) {
-                    if (!item || typeof item.id !== "string" || !item.id || typeof item.label !== "string"
-                        || typeof item.email !== "string" || typeof item["display-name"] !== "string"
-                        || typeof item.default !== "boolean" || !Array.isArray(item.receiving) || !Array.isArray(item.sending)
-                        || item.receiving.some(function(value) { return typeof value !== "string" })
-                        || item.sending.some(function(value) { return typeof value !== "string" }))
-                        throw new Error("Invalid account overview from mail helper.")
-                    labels = root.withAccountLabel(labels, item.id, item.label)
-                })
-                root.accountLabels = labels
-                root.accountOverview = data.accounts
+                root.applyAccountOverview(root.result(accountOverviewOutput.text, code))
             } catch (e) { root.accountOverviewError = e.message }
             if (reload) Qt.callLater(root.loadAccountOverview)
         }
@@ -1307,6 +1409,47 @@ Item {
             if (root.accountOverviewReload) {
                 root.accountOverviewReload = false
                 Qt.callLater(root.loadAccountOverview)
+            }
+        }
+    }
+    Process {
+        id: accountConfigProcess
+        property int request: 0
+        property string transaction: ""
+        property string contextConfig: ""
+        property bool contextDemo: false
+        stdout: StdioCollector { id: accountConfigOutput; waitForEnd: true }
+        stderr: StdioCollector { waitForEnd: true }
+        onRunningChanged: {
+            if (running) return
+            var request = accountConfigProcess.request
+            Qt.callLater(function() {
+                if (request !== root.accountConfigRequest || !root.accountConfigSaving || accountConfigProcess.running) return
+                root.accountConfigSaving = false
+                if (accountConfigProcess.contextConfig === root.config && accountConfigProcess.contextDemo === root.demo) {
+                    root.accountOverviewError = "Could not launch Python 3 to save account configuration."
+                    root.accountConfigSaveFailed(accountConfigProcess.transaction)
+                }
+            })
+        }
+        onExited: function(code, status) {
+            var request = accountConfigProcess.request
+            root.accountConfigSaving = false
+            if (request !== root.accountConfigRequest || accountConfigProcess.contextConfig !== root.config
+                || accountConfigProcess.contextDemo !== root.demo) {
+                root.accountConfigSaveFailed(accountConfigProcess.transaction)
+                return
+            }
+            try {
+                var data = root.result(accountConfigOutput.text, code)
+                if (!data || !Array.isArray(data.accounts)
+                    || !data.accounts.some(function(item) { return item && item.id === root.accountConfigId }))
+                    throw new Error("Invalid account configuration response from mail helper.")
+                root.applyAccountOverview(data)
+                root.accountConfigSaved(accountConfigProcess.transaction)
+            } catch (e) {
+                root.accountOverviewError = e.message
+                root.accountConfigSaveFailed(accountConfigProcess.transaction)
             }
         }
     }

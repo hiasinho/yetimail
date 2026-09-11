@@ -70,7 +70,9 @@ root-dir="PRIVATE_PATH"
         code, result = self.invoke("accounts", "--config", str(self.config) + ":" + str(extra))
         self.assertEqual(code, 0, result)
         self.assertEqual(result["accounts"][0], {"id": "work", "label": "Office", "email": "work@example.test",
-                         "display-name": "Work Name", "default": True, "receiving": ["imap"], "sending": ["smtp"]})
+                         "display-name": "Work Name", "default": True, "receiving": ["imap"], "sending": ["smtp"],
+                         "revision": "", "editable": False, "editable-reason": settings.EDIT_ERROR,
+                         "mailbox-mappings": {role: "" for role in settings.ROLES}})
         self.assertEqual(result["accounts"][1]["display-name"], "Fallback")
         serialized = json.dumps(result)
         for secret in ("PRIVATE", "REPLACED_SECRET", "auth", "login", "password", "cmd", "token", "root-dir"):
@@ -280,6 +282,173 @@ root-dir="PRIVATE_PATH"
                          ("account-label", "--label", "x"), ("list", "--label", "x"),
                          ("cache-clear", "--label", "x"), ("account-label", "--account", " ", "--label", "x")):
                 self.assertEqual(self.invoke(*args)[0], 1)
+
+
+class AccountSaveTest(AccountSettingsTest):
+    def save(self, **changes):
+        values = dict(account_id="work", revision=self.overview()[1]["accounts"][0]["revision"],
+                      email="new@example.test", display_name="New Name", default=True,
+                      mappings={role: role.title() for role in settings.ROLES}, config=str(self.config))
+        values.update(changes)
+        return settings.save_account(**values)
+
+    def test_scalar_preservation_defaults_and_mappings(self):
+        original = '''# top comment
+unknown = { private = "KEEP_ME" }
+[accounts.work] # account
+email = 'old@example.test'  # identity
+[accounts.work.imap]
+login="PRIVATE_LOGIN"
+password = "a # b = c" # secret
+[accounts.work.mailbox.alias]
+inbox = "Old Inbox" # keep alias comment
+custom = "Custom"
+[accounts.personal]
+default = true # old default
+email = "personal@example.test"
+'''
+        self.config.write_text(original)
+        self.config.chmod(0o640)
+        result = self.save()
+        updated = self.config.read_text()
+        for preserved in ('# top comment', 'unknown = { private = "KEEP_ME" }',
+                          'password = "a # b = c" # secret', 'login="PRIVATE_LOGIN"',
+                          'custom = "Custom"', '# identity', '# keep alias comment'):
+            self.assertIn(preserved, updated)
+        self.assertIn('default = false # old default', updated)
+        self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o640)
+        self.assertEqual(self.config.stat().st_gid, os.getgid())
+        backup = list(self.home.glob('.yetimail-backup-*'))[0]
+        self.assertEqual(backup.read_text(), original)
+        self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o600)
+        account = result['accounts'][0]
+        self.assertEqual(account['mailbox-mappings']['inbox'], 'Inbox')
+        self.assertEqual(account['display-name'], 'New Name')
+        self.assertNotIn('PRIVATE', json.dumps(result))
+        self.save(mappings={role: '' for role in settings.ROLES}, default=False)
+        parsed = settings.tomllib.loads(self.config.read_text())
+        self.assertEqual(parsed['accounts']['work']['mailbox']['alias'], {'custom': 'Custom'})
+        self.assertIn('# keep alias comment', self.config.read_text())
+
+    def test_config_can_share_the_private_label_directory_without_deadlock(self):
+        settings.set_account_label('work', 'Office')
+        self.config = self.label_file.parent / 'config.toml'
+        self.config.write_text('[accounts.work]\nemail="old@example.test"\n')
+        result = self.save()
+        self.assertEqual(result['accounts'][0]['label'], 'Office')
+        self.assertEqual(settings.tomllib.loads(self.config.read_text())['accounts']['work']['email'], 'new@example.test')
+
+    def test_stale_revision_and_external_replacement(self):
+        revision = self.overview()[1]['accounts'][0]['revision']
+        self.config.write_text(self.config.read_text() + '# external\n')
+        original = self.config.read_bytes()
+        with self.assertRaises(settings.AccountSettingsError):
+            self.save(revision=revision)
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertEqual(list(self.home.glob('.yetimail-backup-*')), [])
+
+    def test_unsupported_layouts_read_only(self):
+        for raw in ('[accounts]\nwork={email="x"}\n',
+                    '[accounts.work]\nmailbox.alias={inbox="Inbox"}\n',
+                    '[accounts.work]\nemail="""multiple\nlines"""\n',
+                    '[accounts.work]\n[accounts.work.mailbox.alias]\nINBOX="Inbox"\n'):
+            with self.subTest(raw=raw):
+                self.config.write_text(raw)
+                response = self.overview()
+                if response[0] == 0:
+                    self.assertFalse(response[1]['accounts'][0]['editable'])
+                with self.assertRaises(settings.AccountSettingsError):
+                    settings.save_account('work', '0'*64, '', '', False,
+                                          {role: '' for role in settings.ROLES}, str(self.config))
+                self.assertEqual(self.config.read_text(), raw)
+
+    def test_unsafe_files_and_parent(self):
+        original = self.config.read_bytes()
+        target = self.home / 'target'
+        target.write_bytes(original)
+        self.config.unlink()
+        self.config.symlink_to(target)
+        self.assertFalse(self.overview()[1]['accounts'][0]['editable'])
+        self.config.unlink()
+        os.link(target, self.config)
+        self.assertFalse(self.overview()[1]['accounts'][0]['editable'])
+        self.config.unlink()
+        self.config.write_bytes(original)
+        self.config.chmod(0o666)
+        self.assertFalse(self.overview()[1]['accounts'][0]['editable'])
+        self.config.chmod(0o600)
+        self.home.chmod(0o777)
+        self.assertFalse(self.overview()[1]['accounts'][0]['editable'])
+        self.home.chmod(0o700)
+
+    def test_atomic_replace_failure_preserves_original_and_backup(self):
+        original = self.config.read_bytes()
+        with patch('account_settings.os.replace', side_effect=OSError('PRIVATE')):
+            with self.assertRaisesRegex(settings.AccountSettingsError, '^' + settings.SAVE_ERROR):
+                self.save()
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertEqual(list(self.home.glob('.yetimail-save-*')), [])
+        self.assertEqual(list(self.home.glob('.yetimail-backup-*'))[0].read_bytes(), original)
+
+    def test_fsync_failure_before_commit_preserves_original(self):
+        original = self.config.read_bytes()
+        with patch('account_settings.os.fsync', side_effect=OSError('PRIVATE')):
+            with self.assertRaises(settings.AccountSettingsError):
+                self.save()
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertEqual(list(self.home.glob('.yetimail-save-*')), [])
+
+    def test_post_replace_fsync_failure_rolls_back(self):
+        original = self.config.read_bytes()
+        real_fsync = os.fsync
+        calls = 0
+        def fail_commit(fd):
+            nonlocal calls
+            calls += 1
+            if calls == 4:
+                raise OSError('PRIVATE')
+            return real_fsync(fd)
+        with patch('account_settings.os.fsync', side_effect=fail_commit):
+            with self.assertRaises(settings.AccountSettingsError):
+                self.save()
+        self.assertEqual(self.config.read_bytes(), original)
+
+    def test_change_during_staging_is_not_overwritten(self):
+        original = self.config.read_bytes()
+        read_config = settings._read_config
+        calls = 0
+        def changed(directory, name):
+            nonlocal calls
+            calls += 1
+            if calls == 3:  # overview, initial save snapshot, pre-replace check
+                self.config.write_bytes(original + b'# external change\n')
+            return read_config(directory, name)
+        with patch('account_settings._read_config', side_effect=changed):
+            with self.assertRaises(settings.AccountSettingsError):
+                self.save()
+        self.assertEqual(self.config.read_bytes(), original + b'# external change\n')
+
+    def test_quoted_ids_dotted_mappings_and_plural_aliases(self):
+        self.config.write_text('[accounts."work.name"]\nemail="old"\nmailbox.aliases.inbox="Old"\n')
+        result = self.save(account_id='work.name')
+        self.assertEqual(result['accounts'][0]['mailbox-mappings']['sent'], 'Sent')
+        self.assertIn('mailbox.aliases.inbox="Inbox"', self.config.read_text())
+
+    def test_cli_save_explicit_arguments_and_demo_offline(self):
+        options = ['--account=work', '--revision=' + settings.DEMO_REVISION, '--email=--mail@example.test',
+                   '--display-name=--Name', '--default=true'] + ['--' + role + '=' for role in settings.ROLES]
+        with patch('account_settings.config_paths', side_effect=AssertionError('Config accessed')), \
+                patch('account_settings.os.open', side_effect=AssertionError('Filesystem accessed')):
+            code, response = self.invoke('account-save', '--demo', *options)
+            self.assertEqual(code, 0, response)
+            self.assertEqual(response['accounts'][1]['display-name'], '--Name')
+            for omitted in range(len(options)):
+                self.assertEqual(self.invoke('account-save', '--demo', *(options[:omitted] + options[omitted+1:]))[0], 1)
+            for extra in ('--label=x', '--id=x', '--mailbox=x', '--force', '--cache-only', '--default=invalid'):
+                self.assertEqual(self.invoke('account-save', '--demo', *options, extra)[0], 1)
+            self.assertEqual(self.invoke('accounts', '--demo', '--revision=demo')[0], 1)
+        options[1] = '--revision=' + self.overview()[1]['accounts'][0]['revision']
+        self.assertEqual(self.invoke('account-save', '--config=' + str(self.config), *options)[0], 0)
 
 
 if __name__ == "__main__":

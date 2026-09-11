@@ -7,7 +7,7 @@ A keyboard-first Omarchy mail panel powered by **Himalaya 2.1**. Read and manage
 - Keyboard folder picker and Inbox / Sent / Archive / Trash shortcuts.
 - Page-local multi-selection supports bulk move, archive, trash, and read/unread actions.
 - Optional account selector restricted to an explicit allowlist; allowed inboxes are warmed in the background for instant switching.
-- Read-only account overview with private, editable Yetimail display labels.
+- Account overview with editable identity, default account, folder mappings, mail access, and private Yetimail labels.
 - Unread badge counts **only the current page**, not the whole mailbox.
 - Automatic refresh every 120 seconds, plus Refresh / Ctrl+R.
 - Safe text-only message display with compact numbered web links and destination previews.
@@ -26,7 +26,7 @@ Inspired by [omarchy-mail](https://github.com/roymckenzie/omarchy-mail). This is
 - Python 3.11+ (standard library only); `xdg-open` and a default viewer for opening attachments.
 - Himalaya **2.1.x**, with an IMAP account configured and noninteractive authentication working. Older CLI versions use different commands/JSON and are not supported.
 
-Configure your account outside Yetimail:
+Create your initial account outside Yetimail:
 
 ```sh
 himalaya --version
@@ -70,9 +70,13 @@ Settings are declared in `manifest.json` and stored in the widget's entry in `~/
 
 `accounts` is an optional comma-separated allowlist. The account icon's dropdown switches between those accounts, clearing the previous reader and selection; excluded accounts are never queried for mail. After the active inbox is requested, Yetimail warms page 1 and folder discovery for the other allowed accounts in the background, so a later switch can render from a snapshot immediately. The badge belongs to the selected account, not a combined inbox. Selection is per bar instance and resets to `account` after reload (or the first allowed account if the preferred account is excluded).
 
-The gear beside the account and mailbox controls opens a read-only overview of the accounts declared in the effective Himalaya configuration. Yetimail reads this safe overview from local TOML when the widget starts and refreshes it when Settings opens; it does not invoke Himalaya, test connections, authenticate, or fetch mail for the overview. The overview shows account IDs, email/sender identity, default status, and configured backend types. Authentication values, login names, credential commands, tokens, server addresses, and arbitrary configuration values are never returned to QML. Accounts shown in the overview are not automatically enabled for mail access; the explicit `accounts` allowlist remains authoritative.
+The gear beside the account and mailbox controls opens an overview of the accounts declared in the effective Himalaya configuration. Yetimail reads this safe overview from local TOML when the widget starts and refreshes it when Settings opens; it does not invoke Himalaya, test connections, authenticate, or fetch mail for the overview. Account IDs and backend types remain read-only. Authentication values, login names, credential commands, tokens, server addresses, and arbitrary configuration values are never returned to QML.
 
-Friendly labels can be edited in that overview. They affect only Yetimail's account picker, tooltips, and headings; Himalaya commands continue to receive the original account ID. Labels are stored separately in `$XDG_CONFIG_HOME/yetimail/account-labels.json` (normally `~/.config/yetimail/account-labels.json`) using an owner-only directory, private file permissions, and atomic replacement. Clear a label to fall back to its account ID. Yetimail refuses unsafe label paths or files rather than following symlinks. Demo mode neither reads nor writes this file.
+For a supported single-file configuration, Settings can edit an existing account's email address, sender display name, default status, and account-local Inbox, Sent, Drafts, Trash, and Archive mailbox mappings. Save is explicit. Yetimail rejects merged configurations, symlinks, unsafe ownership or permissions, unsupported TOML layouts, and files changed since the form was loaded. It preserves unrelated text and comments, validates the result, writes through an atomic same-directory replacement, and leaves a `.yetimail-backup-*` copy beside the configuration. Reopen Settings before retrying a stale or rejected save. The configuration write itself remains offline; returning to the mail view refreshes its selected mailbox. Use Himalaya privately in a terminal to test authentication or connectivity.
+
+Friendly labels can also be edited in the overview. They affect only Yetimail's account picker, tooltips, and headings; Himalaya commands continue to receive the original account ID. Labels are stored separately in `$XDG_CONFIG_HOME/yetimail/account-labels.json` (normally `~/.config/yetimail/account-labels.json`) using an owner-only directory, private file permissions, and atomic replacement. Clear a label to fall back to its account ID. Yetimail refuses unsafe label paths or files rather than following symlinks. Demo mode neither reads nor writes this file.
+
+The Mail access toggle updates the widget's `accounts` allowlist through the Omarchy shell settings API. It never enables accounts merely because they appear in Himalaya, and the final enabled account cannot be disabled from the form. Enabling a configured account is an explicit grant for Yetimail to query it. Changing the Himalaya default affects commands that omit an account; changing the Yetimail label or allowlist does not.
 
 With an empty allowlist, the single-account behavior is unchanged. An empty `account` or `config` uses Himalaya's default. A nonempty config is a path passed directly to Himalaya. `demo: true` uses synthetic messages. `q` or Close dismisses the panel. Selecting another message waits until the current read completes.
 

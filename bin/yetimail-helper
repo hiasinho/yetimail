@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from attachments import AttachmentError, metadata as attachment_metadata, save as save_attachment
 from mailbox_config import MailboxConfigError, check_literal_mailbox, config_paths, merge, tomllib
-from account_settings import AccountSettingsError, account_labels, account_overview, set_account_label
+from account_settings import AccountSettingsError, account_labels, account_overview, set_account_label, save_account, ROLES
 from message_cache import CacheKey, MessageCache, ListSnapshotCache, FolderSnapshotCache
 
 
@@ -601,8 +601,8 @@ def demo(args):
 
 
 def main(argv=None):
-    parser = Parser(description=__doc__)
-    parser.add_argument("command", choices=("folders", "list", "read", "mark", "save", "move", "delete", "cache-clear", "accounts", "account-label", "account-labels"))
+    parser = Parser(description=__doc__, allow_abbrev=False)
+    parser.add_argument("command", choices=("folders", "list", "read", "mark", "save", "move", "delete", "cache-clear", "accounts", "account-label", "account-labels", "account-save"))
     parser.add_argument("--account", help="Himalaya account name; omit for its default")
     parser.add_argument("--config", help="Himalaya configuration path")
     parser.add_argument("--mailbox", help="backend mailbox ID; omit for the inbox alias")
@@ -618,15 +618,27 @@ def main(argv=None):
     flags.add_argument("--unseen", dest="seen", action="store_false")
     parser.add_argument("--demo", action="store_true", help="use fixtures; never invoke Himalaya")
     parser.add_argument("--label", help="Yetimail friendly label (account-label only; empty removes it)")
+    for option in ("revision", "email", "display-name", "default", *ROLES):
+        parser.add_argument("--" + option, help="account-save only")
     try:
         args = parser.parse_args(argv)
+        save_values = [getattr(args, option.replace("-", "_"))
+                       for option in ("revision", "email", "display-name", "default", *ROLES)]
+        if args.command != "account-save" and any(value is not None for value in save_values):
+            raise HelperError("Account editing options require account-save")
         if args.cache_only and args.command not in ("list", "folders"):
             raise HelperError("--cache-only is only supported for list or folders")
-        if args.command in ("accounts", "account-label", "account-labels"):
+        if args.command in ("accounts", "account-label", "account-labels", "account-save"):
             if any(value is not None for value in (args.mailbox, args.id, args.destination,
                     args.attachment, args.cache_identity, args.page, args.seen)) or args.force:
                 raise HelperError("Account metadata operations do not accept message options")
-            if args.command in ("accounts", "account-labels"):
+            if args.command == "account-save":
+                if args.account is None or args.label is not None or any(value is None for value in save_values) or args.default not in ("true", "false"):
+                    raise HelperError("account-save requires account, revision, email, display-name, default and all mailbox mappings")
+                result = save_account(args.account, args.revision, args.email, args.display_name,
+                                      args.default == "true", {role: getattr(args, role) for role in ROLES},
+                                      args.config, args.demo)
+            elif args.command in ("accounts", "account-labels"):
                 if args.account is not None or args.label is not None:
                     raise HelperError(f"{args.command} does not accept --account or --label")
                 result = (account_labels(args.demo) if args.command == "account-labels"

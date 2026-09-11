@@ -50,6 +50,7 @@ ShellRoot {
                 equal(mail.fixtures.length, 63)
             }
             function init() {
+                widget.settings = ({demo: true, accounts: "alpha,beta", account: "forbidden"})
                 widget.selectedAccount = "alpha"
                 widget.cancelDelete(); mail.deleting = false
                 mail.loading = false; mail.reading = false; mail.marking = false; mail.moving = false; mail.savingAttachment = false; mail.openingAttachment = false
@@ -446,8 +447,16 @@ ShellRoot {
                 var list = find(widget, function(item) { return item.objectName === "accountSettingsList" })
                 var field = find(widget, function(item) { return item.objectName === "accountLabelField" })
                 var save = find(widget, function(item) { return item.objectName === "saveAccountLabelButton" })
+                var enabled = find(widget, function(item) { return item.objectName === "accountEnabledButton" })
+                var email = find(widget, function(item) { return item.objectName === "accountEmailField" })
+                var sender = find(widget, function(item) { return item.objectName === "accountDisplayNameField" })
+                var inboxMapping = find(widget, function(item) { return item.objectName === "accountInboxField" })
+                var makeDefault = find(widget, function(item) { return item.objectName === "accountDefaultButton" })
+                var saveConfig = find(widget, function(item) { return item.objectName === "saveAccountConfigButton" })
                 var settings = find(widget, function(item) { return item.objectName === "accountSettings" })
-                check(list !== null && field !== null && save !== null && settings !== null, "account overview controls found")
+                check(list !== null && field !== null && save !== null && enabled !== null && email !== null
+                    && sender !== null && inboxMapping !== null && makeDefault !== null && saveConfig !== null && settings !== null,
+                    "account editor controls found")
                 equal(list.count, 3, "overview includes configured accounts outside the mail allowlist")
                 var overview = mail.accountOverview
                 mail.accountOverview = []
@@ -455,6 +464,36 @@ ShellRoot {
                 mail.accountOverview = overview
                 wait(30)
                 equal(field.text, "Work", "asynchronous discovery preserves the requested account")
+                equal(email.text, "beta@example.test", "Himalaya email is editable")
+                email.text = "new-beta@example.test"
+                widget.saveAllowedAccount("configured-only", true)
+                wait(30)
+                equal(email.text, "new-beta@example.test", "mail access changes preserve unsaved configuration fields")
+                field.text = "Pending Beta Label"
+                var refreshed = mail.accountOverview.map(function(item) {
+                    if (item.id !== "beta") return item
+                    var copy = Object.assign({}, item)
+                    copy.revision = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                    copy["mailbox-mappings"] = Object.assign({}, item["mailbox-mappings"], {inbox: "External Inbox"})
+                    return copy
+                })
+                mail.accountOverview = refreshed
+                wait(30)
+                equal(field.text, "Pending Beta Label", "overview refresh preserves an unsaved label")
+                equal(email.text, "new-beta@example.test", "overview refresh preserves an unsaved identity")
+                equal(settings.editorRevision, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "preserved drafts retain their stale-write revision")
+                equal(inboxMapping.text, "", "an external mapping is not merged invisibly into a draft")
+                sender.text = "New Beta Sender"
+                makeDefault.clicked()
+                saveConfig.clicked()
+                wait(30)
+                equal(mail.accountOverview[1].email, "new-beta@example.test", "identity edits reach the service")
+                check(mail.accountOverview[1].default && !mail.accountOverview[0].default, "default edit remains unique")
+                equal(mail.calls[mail.calls.length - 1].operation, "account-save")
+                settings.focusAccount("configured-only")
+                check(!email.enabled, "unsupported configurations remain read-only")
+                check(widget.accounts.indexOf("configured-only") >= 0, "mail access updates the persisted allowlist state")
                 settings.focusAccount("alpha")
                 equal(field.text, "Personal", "saved friendly label is editable")
                 var page = mail.page

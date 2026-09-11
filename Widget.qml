@@ -93,6 +93,7 @@ BarWidget {
     readonly property int selectedCount: selectedIds.length
     property bool showHelp: false
     property bool showSettings: false
+    property string accountConfigTransaction: ""
     property bool showAccounts: false
     property int accountIndex: 0
     property bool showFolders: false
@@ -217,7 +218,7 @@ BarWidget {
     }
     onCursorIdChanged: { updatePrefetchSelection(); Qt.callLater(saveViewState) }
     onPaneChanged: { cancelDelete(false); updatePrefetchSelection() }
-    readonly property bool switchingBlocked: confirmingDelete || mail.deleting || mail.movePending || mail.marking || mail.savingAttachment || mail.openingAttachment
+    readonly property bool switchingBlocked: confirmingDelete || mail.accountConfigBlocked || mail.deleting || mail.movePending || mail.marking || mail.savingAttachment || mail.openingAttachment
     readonly property var accountChoices: accounts.length ? accounts : [currentAccount || mail.accountLabel]
     function defaultAccountId() {
         if (currentAccount || !Array.isArray(mail.accountOverview)) return ""
@@ -248,6 +249,67 @@ BarWidget {
             if (root.showAccounts && root.accountChoices.length) accountOverlay.reveal(root.accountIndex)
         })
     }
+    function saveAllowedAccount(accountId, enabled) {
+        accountId = String(accountId || "")
+        if (!accountId || accountId.indexOf(",") >= 0 || !mail.accountOverview.some(function(item) { return item && item.id === accountId })) return
+        var next = accounts.slice()
+        if (!next.length) {
+            var initial = currentAccount
+            if (!mail.accountOverview.some(function(item) { return item && item.id === initial }))
+                initial = defaultAccountId()
+            if (initial && initial.indexOf(",") < 0) next.push(initial)
+        }
+        var index = next.indexOf(accountId)
+        if (enabled && index < 0) next.push(accountId)
+        else if (!enabled && index >= 0) next.splice(index, 1)
+        if (!next.length) return
+        var updated = Object.assign({}, settings || ({}))
+        updated.accounts = next.join(",")
+        if (updated.account && next.indexOf(String(updated.account)) < 0) updated.account = next[0]
+        selectedAccount = next.indexOf(currentAccount) >= 0 ? currentAccount : next[0]
+        if (bar && bar.shell && typeof bar.shell.updateEntryInline === "function")
+            bar.shell.updateEntryInline(moduleName, updated)
+        settings = updated
+    }
+    function accountConfigSafeAcrossInstances() {
+        var items = bar && typeof bar.moduleWidgets === "function" ? bar.moduleWidgets(moduleName) : [root]
+        return items.every(function(item) {
+            var service = item ? item.mailService : null
+            return service && !service.deleting && !service.movePending && !service.marking
+                && !service.savingAttachment && !service.openingAttachment && !service.accountConfigSaving
+        })
+    }
+    function broadcastAccountConfig(method, transaction) {
+        var items = bar && typeof bar.moduleWidgets === "function" ? bar.moduleWidgets(moduleName) : [root]
+        items.forEach(function(item) {
+            if (item && typeof item[method] === "function") item[method](transaction)
+        })
+    }
+    function prepareAccountConfigurationSave(transaction) { mail.prepareAccountConfigSave(transaction) }
+    function accountConfigurationChanged(transaction) { mail.commitAccountConfigSave(transaction, showSettings) }
+    function accountConfigurationSaveFailed(transaction) { mail.cancelAccountConfigSave(transaction) }
+    function accountConfigurationFenceExpired(transaction) {
+        var items = bar && typeof bar.moduleWidgets === "function" ? bar.moduleWidgets(moduleName) : [root]
+        var writerAlive = items.some(function(item) {
+            var service = item ? item.mailService : null
+            return service && service.accountConfigSaving && service.accountConfigFenceToken === transaction
+        })
+        broadcastAccountConfig(writerAlive ? "renewAccountConfigurationFence" : "accountConfigurationSaveFailed", transaction)
+    }
+    function renewAccountConfigurationFence(transaction) { mail.renewAccountConfigFence(transaction) }
+    function saveAccountConfiguration(accountId, revision, email, displayName, makeDefault, inbox, sent, drafts, trash, archive) {
+        if (!accountConfigSafeAcrossInstances()) {
+            mail.accountOverviewError = "Wait for mail actions on every display to finish before saving account settings."
+            return
+        }
+        var transaction = Date.now() + "-" + Math.random()
+        accountConfigTransaction = transaction
+        broadcastAccountConfig("prepareAccountConfigurationSave", transaction)
+        if (!mail.saveAccountConfig(transaction, accountId, revision, email, displayName, makeDefault, inbox, sent, drafts, trash, archive)) {
+            broadcastAccountConfig("accountConfigurationSaveFailed", transaction)
+            accountConfigTransaction = ""
+        }
+    }
     function openSettings() {
         if (switchingBlocked || confirmingDelete) return
         if (showAccounts) dismissAccounts()
@@ -261,7 +323,9 @@ BarWidget {
         Qt.callLater(function() { settingsOverlay.focusAccount(root.currentAccount) })
     }
     function dismissSettings() {
+        if (mail.accountConfigSaving) return
         showSettings = false
+        mail.resumeAccountConfig()
         if (pane === "reader") readerPane.focusBody()
         else sidebar.focusList()
     }
@@ -496,7 +560,7 @@ BarWidget {
     readonly property string targetId: pane === "reader" ? mail.selectedId : cursorId
     readonly property var targetEnvelope: mail.messages.find(function(m) { return m.id === root.targetId }) || null
     readonly property var displayedEnvelope: mail.messages.find(function(m) { return m.id === mail.selectedId }) || null
-    readonly property bool busy: mail.deleting || mail.loading || mail.reading || mail.marking || mail.movePaused || mail.savingAttachment || mail.openingAttachment
+    readonly property bool busy: mail.accountConfigBlocked || mail.deleting || mail.loading || mail.reading || mail.marking || mail.movePaused || mail.savingAttachment || mail.openingAttachment
 
     function selectAccount(name) {
         if (accounts.indexOf(name) !== -1 && !switchingBlocked && !showHelp) {
@@ -613,11 +677,12 @@ BarWidget {
     onCurrentAccountChanged: { cancelDelete(false); clearSelection(); moveNextId = ""; moveTargetIds = []; movePicker = false; cursorId = ""; pane = "list"; showHelp = false; showSettings = false; showAccounts = false; showFolders = false; showLinks = false; showHeaders = false; showAttachments = false; accountWarmTimer.restart() }
     onOpenedChanged: {
         cancelDelete(false)
-        if (opened) { showHelp = false; Qt.callLater(focusList) }
+        if (opened) { showHelp = false; mail.resumeAccountConfig(); Qt.callLater(focusList) }
         else { clearSelection(); showSettings = false; showAccounts = false; showFolders = false; showHelp = false; mail.cancelAttachmentOpen() }
         updatePrefetchSelection()
     }
 
+    readonly property alias mailService: mail
     MailService {
         id: mail
         active: root.bar !== null || demo
@@ -634,6 +699,15 @@ BarWidget {
             }
         }
         function onConfigChanged() { root.viewStateByPage = ({}); root.readerStateByMessage = ({}); if (mail.active) { mail.loadAccountOverview(); accountWarmTimer.restart() } }
+        function onAccountConfigSaved(transaction) {
+            root.broadcastAccountConfig("accountConfigurationChanged", transaction)
+            if (root.accountConfigTransaction === transaction) root.accountConfigTransaction = ""
+        }
+        function onAccountConfigSaveFailed(transaction) {
+            root.broadcastAccountConfig("accountConfigurationSaveFailed", transaction)
+            if (root.accountConfigTransaction === transaction) root.accountConfigTransaction = ""
+        }
+        function onAccountConfigFenceExpired(transaction) { root.accountConfigurationFenceExpired(transaction) }
         function onGenerationChanged() {
             root.cancelDelete(false)
             if (root.showAccounts) root.dismissAccounts()
@@ -931,14 +1005,20 @@ BarWidget {
                 anchors.fill: parent
                 visible: root.showSettings
                 accounts: mail.accountOverview
+                allowedAccounts: root.accounts
                 currentAccount: root.currentAccount
                 loading: mail.accountOverviewLoading
                 saving: mail.accountLabelSaving
+                configSaving: mail.accountConfigSaving
                 error: mail.accountOverviewError
                 icons: root.icons
                 onDismissRequested: root.dismissSettings()
                 onRetryRequested: mail.loadAccountOverview()
                 onSaveLabelRequested: function(accountId, label) { mail.saveAccountLabel(accountId, label) }
+                onEnabledRequested: function(accountId, enabled) { root.saveAllowedAccount(accountId, enabled) }
+                onSaveConfigRequested: function(accountId, revision, email, displayName, makeDefault, inbox, sent, drafts, trash, archive) {
+                    root.saveAccountConfiguration(accountId, revision, email, displayName, makeDefault, inbox, sent, drafts, trash, archive)
+                }
             }
             ShortcutHelp {
                 id: helpOverlay

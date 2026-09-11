@@ -22,17 +22,35 @@ Item {
     property int discoveryGeneration: 0
     property string pendingFolderRole: ""
     property bool foldersReload: false
+    property bool foldersProbe: false
+    property var folderCacheProbed: ({})
+    property var folderWarmQueue: []
+    property var folderWarmJob: null
     // Successful discovery is retained per effective configuration/account for
     // this process. Cache entries include an explicit loaded bit so a valid
     // empty result remains distinct from a context that was never discovered.
     property var folderCache: ({})
 
+    function folderCacheKeyFor(configPath, accountId, demoMode) {
+        return JSON.stringify([String(configPath), String(accountId), !!demoMode])
+    }
+
     function folderCacheKey() {
-        return JSON.stringify([String(config), String(account), !!demo])
+        return folderCacheKeyFor(config, account, demo)
     }
 
     function restoreFolderCache(clearCache) {
-        if (clearCache) folderCache = ({})
+        if (clearCache) {
+            folderCache = ({})
+            pageSnapshots = ({})
+            preferredPages = ({})
+            snapshotOrder = []
+            accountEpochs = ({})
+            snapshotEpoch++
+            listQueue = []
+            folderCacheProbed = ({})
+            folderWarmQueue = []
+        }
         var entry = folderCache[folderCacheKey()]
         if (entry && entry.loaded && Array.isArray(entry.folders)) {
             folders = entry.folders.slice()
@@ -43,11 +61,22 @@ Item {
         }
     }
 
-    function cacheFolders(discovered) {
+    function cacheFoldersFor(key, discovered) {
         var next = ({})
-        Object.keys(folderCache).forEach(function(key) { next[key] = folderCache[key] })
-        next[folderCacheKey()] = {loaded: true, folders: discovered.slice()}
+        Object.keys(folderCache).forEach(function(existing) { next[existing] = folderCache[existing] })
+        next[key] = {loaded: true, folders: discovered.slice()}
         folderCache = next
+    }
+
+    function cacheFolders(discovered) { cacheFoldersFor(folderCacheKey(), discovered) }
+
+    function folderCommand(accountId, configPath, demoMode, cacheOnly) {
+        var args = ["python3", decodeURIComponent(Qt.resolvedUrl("bin/yetimail-helper").toString().replace(/^file:\/\//, "")), "folders"]
+        if (accountId) args.push("--account", accountId)
+        if (configPath) args.push("--config", configPath)
+        if (demoMode) args.push("--demo")
+        if (cacheOnly) args.push("--cache-only")
+        return args
     }
 
     function loadFolders() {
@@ -61,7 +90,14 @@ Item {
         foldersLoading = true
         foldersGeneration = discoveryGeneration
         foldersRequest++
-        foldersProcess.command = command("folders")
+        var key = folderCacheKey()
+        foldersProbe = !demo && !foldersLoaded && !folderCacheProbed[key]
+        if (foldersProbe) {
+            var probed = Object.assign({}, folderCacheProbed)
+            probed[key] = true
+            folderCacheProbed = probed
+        }
+        foldersProcess.command = folderCommand(account, config, demo, foldersProbe)
         foldersProcess.running = true
     }
 
@@ -87,9 +123,14 @@ Item {
     }
     // Discovery may finish while an operation has latched. Retry next turn,
     // after exit handlers finish applying old-folder results or launching a viewer.
-    onDeletingChanged: if (!deleting) Qt.callLater(retryPendingFolderRole)
-    onMovingChanged: if (!moving) Qt.callLater(retryPendingFolderRole)
-    onMarkingChanged: if (!marking) Qt.callLater(retryPendingFolderRole)
+    onDeletingChanged: if (!deleting) { Qt.callLater(retryPendingFolderRole); Qt.callLater(resumeLists) }
+    onMovingChanged: if (!moving) { Qt.callLater(retryPendingFolderRole); Qt.callLater(resumeLists) }
+    onMarkingChanged: if (!marking) { Qt.callLater(retryPendingFolderRole); Qt.callLater(resumeLists) }
+
+    function resumeLists() {
+        if (!ready || !active || deleting || movePending || marking) return
+        Qt.callLater(startListJob)
+    }
     onSavingAttachmentChanged: if (!savingAttachment) Qt.callLater(retryPendingFolderRole)
     onOpeningAttachmentChanged: if (!openingAttachment) Qt.callLater(retryPendingFolderRole)
 
@@ -255,6 +296,19 @@ Item {
     property string accountLabelId: ""
     // Quickshell's running flips only after launch, so latch requests ourselves.
     property bool loading: false
+    property bool refreshing: false
+    property var pageSnapshots: ({})
+    property var preferredPages: ({})
+    property var snapshotOrder: []
+    property int snapshotLimit: 32
+    property int snapshotEpoch: 0
+    property var accountEpochs: ({})
+    property var listQueue: []
+    property var listJob: null
+    property string visibleListKey: ""
+    property var allowedWarmAccounts: []
+    property var markContext: null
+    property var deleteContext: null
     property bool reading: false
     property bool ready: false
     Component.onCompleted: { ready = true; Qt.callLater(refresh) }
@@ -279,6 +333,242 @@ Item {
     property string markId: ""
     property bool markSeen: false
     readonly property int unread: messages.filter(function(m) { return m.unread }).length
+
+    function mailboxViewKey(accountId, mailbox) {
+        return JSON.stringify([String(config), String(accountId), !!demo, String(mailbox)])
+    }
+
+    function listContext(accountId, mailbox, target) {
+        var scope = JSON.stringify([String(config), String(accountId), !!demo])
+        return {config: config, account: accountId, demo: demo, folder: mailbox, page: target,
+                scope: scope, epoch: snapshotEpoch, revision: accountEpochs[scope] || 0,
+                key: JSON.stringify([String(config), String(accountId), !!demo, mailbox, target])}
+    }
+
+    function defaultAccountId() {
+        var defaults = accountOverview.filter(function(item) { return item && item.default === true && item.id })
+        return defaults.length === 1 ? String(defaults[0].id) : ""
+    }
+
+    function equivalentListScopes(c) {
+        var scopes = [c.scope]
+        function include(accountId) {
+            var scope = JSON.stringify([String(c.config), String(accountId), !!c.demo])
+            if (scopes.indexOf(scope) < 0) scopes.push(scope)
+        }
+        var defaultId = defaultAccountId()
+        // The helper treats omitted and literal "default" as aliases. A named
+        // account may also be the default even if safe overview parsing failed.
+        if (c.account) { include(""); include("default") }
+        if (defaultId && (c.account === defaultId || !c.account || c.account === "default")) include(defaultId)
+        if (!c.account || c.account === "default") {
+            // Without a resolvable overview, conservatively fence every allowed
+            // account rather than risk restoring an aliased pre-mutation page.
+            allowedWarmAccounts.forEach(include)
+            Object.keys(pageSnapshots).forEach(function(key) {
+                var context = pageSnapshots[key].context
+                if (context.config === c.config && context.demo === c.demo) include(context.account)
+            })
+            listQueue.forEach(function(job) {
+                if (job.context.config === c.config && job.context.demo === c.demo) include(job.context.account)
+            })
+            if (listJob && listJob.context.config === c.config && listJob.context.demo === c.demo)
+                include(listJob.context.account)
+        }
+        return scopes
+    }
+
+    function validListContext(c) {
+        return c && c.epoch === snapshotEpoch && c.revision === (accountEpochs[c.scope] || 0)
+    }
+
+    function visibleList(c) {
+        return active && validListContext(c) && c.key === visibleListKey
+    }
+
+    function storePage(c, data) {
+        if (!validListContext(c)) return
+        var next = Object.assign({}, pageSnapshots)
+        next[c.key] = {context: c, value: JSON.parse(JSON.stringify(data))}
+        var order = snapshotOrder.filter(function(key) { return key !== c.key }).concat([c.key])
+        while (order.length > Math.max(1, snapshotLimit)) delete next[order.shift()]
+        pageSnapshots = next
+        snapshotOrder = order
+    }
+
+    function showPage(c, data) {
+        messages = data.messages.map(function(m) {
+            var row = Object.assign({}, m)
+            if (c.demo && Object.prototype.hasOwnProperty.call(demoSeen, row.id)) row.unread = !demoSeen[row.id]
+            return row
+        })
+        page = data.page === undefined ? c.page : data.page
+        hasNext = data.hasNext === undefined ? messages.length >= 50 : !!data.hasNext
+        accountLabel = data.account || c.account || "Default account"
+        var views = Object.assign({}, preferredPages)
+        views[mailboxViewKey(c.account, c.folder)] = page
+        preferredPages = views
+        loading = false
+    }
+
+    // Conservative account-wide fencing covers configured Inbox aliases and
+    // destination IDs that differ from source IDs. Never probe pre-mutation disk pages.
+    function fenceLists(c, discard) {
+        if (!c || c.epoch !== snapshotEpoch) return
+        var scopes = equivalentListScopes(c)
+        var revisions = Object.assign({}, accountEpochs)
+        scopes.forEach(function(scope) { revisions[scope] = (revisions[scope] || 0) + 1 })
+        accountEpochs = revisions
+        var next = Object.assign({}, pageSnapshots)
+        Object.keys(next).forEach(function(key) {
+            var entry = next[key]
+            if (scopes.indexOf(entry.context.scope) < 0) return
+            if (discard) delete next[key]
+            else next[key] = {context: Object.assign({}, entry.context, {revision: revisions[entry.context.scope]}),
+                value: entry.value}
+        })
+        pageSnapshots = next
+        snapshotOrder = snapshotOrder.filter(function(key) { return !!next[key] })
+        listQueue = listQueue.filter(function(job) { return root.validListContext(job.context) })
+        if (scopes.indexOf(listContext(account, folderId, page).scope) >= 0) refreshing = false
+    }
+
+    function patchSnapshots(c, id, seen) {
+        // Preserve pages for the exact source spelling, but discard every other
+        // potentially aliased mailbox in equivalent default-account contexts.
+        var old = Object.assign({}, pageSnapshots)
+        var scopes = equivalentListScopes(c)
+        fenceLists(c, true)
+        Object.keys(old).forEach(function(key) {
+            var entry = old[key]
+            if (scopes.indexOf(entry.context.scope) < 0 || entry.context.folder !== c.folder) return
+            var rows = entry.value.messages.map(function(row) {
+                return row.id === id ? Object.assign({}, row, {unread: !seen}) : Object.assign({}, row)
+            })
+            var updated = listContext(entry.context.account, entry.context.folder, entry.context.page)
+            storePage(updated, {messages: rows, page: entry.context.page,
+                hasNext: !!entry.value.hasNext, account: entry.value.account || entry.context.account || "Default account"})
+        })
+    }
+
+    function queueList(c, probe, foreground) {
+        if (!validListContext(c)) return
+        if (listJob && listJob.context.key === c.key && validListContext(listJob.context)) return
+        var queue = listQueue.slice()
+        var index = queue.findIndex(function(job) { return job.context.key === c.key && root.validListContext(job.context) })
+        if (index >= 0) {
+            if (foreground) queue[index] = {context: c, probe: queue[index].probe, foreground: true}
+        } else queue.push({context: c, probe: probe, foreground: foreground})
+        listQueue = queue
+        Qt.callLater(startListJob)
+    }
+
+    function startListJob() {
+        if (listJob || !ready || !active || deleting || movePending || marking) return
+        var queue = listQueue.filter(function(job) {
+            return root.validListContext(job.context) && (job.foreground
+                || (!root.demo && root.allowedWarmAccounts.indexOf(job.context.account) >= 0))
+        })
+        if (!queue.length) { listQueue = []; return }
+        var index = queue.findIndex(function(job) { return job.context.key === root.visibleListKey })
+        if (index < 0) index = queue.findIndex(function(job) { return job.foreground })
+        if (index < 0) index = 0
+        var job = queue.splice(index, 1)[0]
+        listQueue = queue
+        listJob = job
+        var c = job.context
+        // Capture all arguments now; no queued work consults later account settings.
+        var args = ["python3", decodeURIComponent(Qt.resolvedUrl("bin/yetimail-helper").toString().replace(/^file:\/\//, "")), "list"]
+        if (c.account) args.push("--account", c.account)
+        if (c.config) args.push("--config", c.config)
+        if (c.demo) args.push("--demo")
+        if (c.folder) args.push("--mailbox=" + c.folder)
+        args.push("--page", String(c.page))
+        if (job.probe) args.push("--cache-only")
+        listProcess.command = args
+        listProcess.running = true
+    }
+
+    function finishList(text, code, launchError) {
+        var job = listJob
+        if (!job) return
+        listJob = null
+        var c = job.context
+        var current = visibleList(c)
+        if (validListContext(c)) {
+            try {
+                if (launchError) throw new Error(launchError)
+                var data = result(text, code)
+                if (job.probe) data = data.hit === true ? data.value : null
+                if (data) {
+                    if (!Array.isArray(data.messages)) throw new Error("Invalid message list from mail helper.")
+                    storePage(c, data)
+                    if (current) { showPage(c, data); refreshing = job.probe }
+                }
+            } catch (e) { if (current && !job.probe) listError = e.message }
+            if (job.probe) queueList(c, false, current)
+            else if (current) {
+                loading = false
+                refreshing = false
+                // Adjacent pages warm after the visible page, without changing it.
+                var previous = c.page > 1 ? listContext(c.account, c.folder, c.page - 1) : null
+                var following = data && data.hasNext === true ? listContext(c.account, c.folder, c.page + 1) : null
+                if (previous && !pageSnapshots[previous.key]) queueList(previous, false, true)
+                if (following && !pageSnapshots[following.key]) queueList(following, false, true)
+            }
+        }
+        Qt.callLater(startListJob)
+    }
+
+    function warmAccounts(allowedAccounts) {
+        allowedWarmAccounts = Array.isArray(allowedAccounts) ? allowedAccounts.filter(function(id, index) {
+            return typeof id === "string" && !!id.trim() && allowedAccounts.indexOf(id) === index
+        }) : []
+        if (demo || !ready || !active) return
+        var folderQueue = folderWarmQueue.slice()
+        allowedWarmAccounts.forEach(function(id) {
+            if (id !== root.account) {
+                var c = root.listContext(id, "", 1)
+                if (!root.pageSnapshots[c.key]) root.queueList(c, !(root.accountEpochs[c.scope] || 0), false)
+            }
+            var key = root.folderCacheKeyFor(root.config, id, false)
+            var queued = folderQueue.some(function(job) { return job.key === key })
+            if (!root.folderCache[key] && !queued && (!root.folderWarmJob || root.folderWarmJob.key !== key))
+                folderQueue.push({account: id, config: root.config, key: key, epoch: root.snapshotEpoch})
+        })
+        folderWarmQueue = folderQueue
+        Qt.callLater(startFolderWarm)
+    }
+
+    function startFolderWarm() {
+        if (folderWarmJob || demo || !ready || !active || !folderWarmQueue.length) return
+        var queue = folderWarmQueue.filter(function(job) {
+            return job.epoch === root.snapshotEpoch && root.allowedWarmAccounts.indexOf(job.account) >= 0
+        })
+        folderWarmQueue = queue.slice(1)
+        if (!queue.length) return
+        folderWarmJob = queue[0]
+        folderWarmProcess.command = folderCommand(folderWarmJob.account, folderWarmJob.config, false, false)
+        folderWarmProcess.running = true
+    }
+
+    function finishFolderWarm(text, code) {
+        var job = folderWarmJob
+        folderWarmJob = null
+        if (job && job.epoch === snapshotEpoch) {
+            try {
+                var data = result(text, code)
+                if (!Array.isArray(data.folders)) throw new Error("Invalid warmed folder list.")
+                var discovered = inboxFirst(data.folders)
+                cacheFoldersFor(job.key, discovered)
+                if (job.key === folderCacheKey() && !foldersLoaded) {
+                    folders = discovered.slice()
+                    foldersLoaded = true
+                }
+            } catch (e) { /* Background warming never replaces foreground errors. */ }
+        }
+        Qt.callLater(startFolderWarm)
+    }
 
     function command(operation) {
         var args = ["python3", decodeURIComponent(Qt.resolvedUrl("bin/yetimail-helper").toString().replace(/^file:\/\//, "")), operation]
@@ -425,12 +715,17 @@ Item {
         actionError = ""
         attachmentStatus = ""
         cancelAttachmentOpen()
-        page = 1
+        var rememberedPage = Number(preferredPages[mailboxViewKey(account, folderId)]) || 1
+        page = Math.max(1, Math.floor(rememberedPage))
         hasNext = false
         demoSeen = ({})
         accountLabel = account || "Default account"
-        // In-flight results are discarded; refresh after they finish.
-        Qt.callLater(refresh)
+        loading = false
+        refreshing = false
+        visibleListKey = ""
+        listQueue = listQueue.filter(function(job) { return !job.foreground })
+        // Memory restoration is synchronous even while another account is fetching.
+        if (ready && active) fetchPage(page)
     }
 
     function refresh() { fetchPage(page) }
@@ -444,7 +739,7 @@ Item {
     }
 
     function fetchPage(target) {
-        if (!ready || !active || loading || deleting || movePending || marking || (reading && target !== page)) return
+        if (!ready || !active || loading || deleting || movePending || marking || (reading && readGeneration === generation && target !== page)) return
         if (target !== page) {
             invalidatePrefetch()
             selectedId = ""
@@ -455,10 +750,15 @@ Item {
         actionError = ""
         requestedPage = target
         listGeneration = generation
-        loading = true
         listRequest++
-        listProcess.command = command("list").concat(["--page", String(target)])
-        listProcess.running = true
+        var c = listContext(account, folderId, target)
+        visibleListKey = c.key
+        var cached = pageSnapshots[c.key]
+        if (cached && !validListContext(cached.context)) cached = null
+        loading = !cached && !(target === page && messages.length)
+        refreshing = !loading
+        if (cached) { showPage(c, cached.value); refreshing = true }
+        queueList(c, !cached && !demo && !(accountEpochs[c.scope] || 0), true)
     }
 
     function setRead(id, seen) { return setReadMany([String(id)], seen) }
@@ -506,6 +806,8 @@ Item {
             Qt.callLater(refresh)
             return
         }
+        markContext = listContext(account, folderId, page)
+        fenceLists(markContext, false)
         markId = entry.id
         markSeen = entry.seen
         markGeneration = entry.generation
@@ -544,6 +846,8 @@ Item {
             return false
         }
         invalidatePrefetch()
+        deleteContext = listContext(account, folderId, page)
+        fenceLists(deleteContext, true)
         deleteGeneration = generation
         deleteAccount = account
         deleteFolder = folderId
@@ -605,6 +909,8 @@ Item {
             Qt.callLater(refresh)
             return
         }
+        entry.listContext = listContext(entry.account, entry.folder, entry.page)
+        fenceLists(entry.listContext, true)
         moveActive = entry
         moveGeneration = entry.generation
         moveAccount = entry.account
@@ -693,6 +999,7 @@ Item {
             return false
         }
         invalidatePrefetch()
+        fenceLists(listContext(account, folderId, page), true)
         if (!moveQueue.length) moveSequence = messages.map(function(message) { return message.id })
         var entries = ids.map(function(id) {
             return {
@@ -1004,40 +1311,65 @@ Item {
         }
     }
     Process {
+        id: folderWarmProcess
+        stdout: StdioCollector { id: folderWarmOutput; waitForEnd: true }
+        stderr: StdioCollector { waitForEnd: true }
+        onRunningChanged: {
+            if (running) return
+            var job = root.folderWarmJob
+            Qt.callLater(function() {
+                if (job && root.folderWarmJob === job && !folderWarmProcess.running)
+                    root.finishFolderWarm("", -1)
+            })
+        }
+        onExited: function(code, status) { root.finishFolderWarm(folderWarmOutput.text, code) }
+    }
+    Process {
         id: foldersProcess
         stdout: StdioCollector { id: foldersOutput; waitForEnd: true }
         stderr: StdioCollector { waitForEnd: true }
         onRunningChanged: {
             if (running) return
             var request = root.foldersRequest
+            var probe = root.foldersProbe
             Qt.callLater(function() {
                 if (request !== root.foldersRequest || !root.foldersLoading || foldersProcess.running) return
                 root.foldersLoading = false
+                root.foldersProbe = false
                 if (root.foldersGeneration !== root.discoveryGeneration) {
                     if (root.pendingFolderRole || root.foldersReload) Qt.callLater(root.loadFolders)
-                } else {
+                } else if (probe) Qt.callLater(root.loadFolders)
+                else {
                     root.pendingFolderRole = ""
                     root.foldersError = "Could not launch Python 3 to list folders."
                 }
             })
         }
         onExited: function(code, status) {
+            var probe = root.foldersProbe
             root.foldersLoading = false
+            root.foldersProbe = false
             if (root.foldersGeneration !== root.discoveryGeneration) {
                 if (root.pendingFolderRole || root.foldersReload) Qt.callLater(root.loadFolders)
                 return
             }
             try {
                 var data = root.result(foldersOutput.text, code)
-                if (!Array.isArray(data.folders) || data.folders.some(function(f) {
-                    return !f || typeof f.id !== "string" || !f.id || typeof f.name !== "string" || !f.name
-                })) throw new Error("Invalid folder list from mail helper.")
-                var discovered = root.inboxFirst(data.folders)
-                root.folders = discovered
-                root.foldersLoaded = true
-                root.cacheFolders(discovered)
-                root.retryPendingFolderRole()
-            } catch (e) { root.pendingFolderRole = ""; root.foldersError = e.message }
+                if (probe) data = data && data.hit === true ? data.value : null
+                if (data) {
+                    if (!Array.isArray(data.folders) || data.folders.some(function(f) {
+                        return !f || typeof f.id !== "string" || !f.id || typeof f.name !== "string" || !f.name
+                    })) throw new Error("Invalid folder list from mail helper.")
+                    var discovered = root.inboxFirst(data.folders)
+                    root.folders = discovered
+                    root.foldersLoaded = true
+                    root.cacheFolders(discovered)
+                    root.retryPendingFolderRole()
+                }
+            } catch (e) {
+                if (!probe) { root.pendingFolderRole = ""; root.foldersError = e.message }
+            }
+            if (probe) Qt.callLater(root.loadFolders)
         }
     }
     Process {
@@ -1046,33 +1378,13 @@ Item {
         stderr: StdioCollector { waitForEnd: true }
         onRunningChanged: {
             if (running) return
-            var request = root.listRequest
+            var job = root.listJob
             Qt.callLater(function() {
-                // FailedToStart does not emit exited. Normal exits clear the
-                // latch; a later request must not inherit this failure check.
-                if (request !== root.listRequest || !root.loading || listProcess.running) return
-                root.loading = false
-                if (root.listGeneration !== root.generation) Qt.callLater(root.refresh)
-                else root.listError = "Could not launch Python 3. Check that python3 is installed and on PATH."
+                if (!job || root.listJob !== job || listProcess.running) return
+                root.finishList("", -1, "Could not launch Python 3. Check that python3 is installed and on PATH.")
             })
         }
-        onExited: function(code, status) {
-            root.loading = false
-            if (root.listGeneration !== root.generation) { Qt.callLater(root.refresh); return }
-            try {
-                var data = root.result(listOutput.text, code)
-                if (!Array.isArray(data.messages)) throw new Error("Invalid message list from mail helper.")
-                root.messages = data.messages.map(function(m) {
-                    if (root.demo && Object.prototype.hasOwnProperty.call(root.demoSeen, m.id))
-                        m.unread = !root.demoSeen[m.id]
-                    return m
-                })
-                // Older lifecycle fixtures omit pagination metadata.
-                root.page = data.page === undefined ? root.requestedPage : data.page
-                root.hasNext = data.hasNext === undefined ? data.messages.length >= 50 : !!data.hasNext
-                root.accountLabel = data.account || root.account || "Default account"
-            } catch (e) { root.listError = e.message }
-        }
+        onExited: function(code, status) { root.finishList(listOutput.text, code, "") }
     }
     Timer {
         id: prefetchTimer
@@ -1171,6 +1483,7 @@ Item {
         }
         onExited: function(code, status) {
             var entry = root.moveActive
+            if (entry) root.fenceLists(entry.listContext, true)
             if (!root.moveCurrent(entry)) {
                 root.moving = false
                 root.moveActive = null
@@ -1209,6 +1522,7 @@ Item {
             })
         }
         onExited: function(code, status) {
+            root.fenceLists(root.deleteContext, true)
             root.deleting = false
             if (!root.deleteCurrent()) { Qt.callLater(root.refresh); return }
             try {
@@ -1242,11 +1556,16 @@ Item {
             })
         }
         onExited: function(code, status) {
-            if (root.markGeneration !== root.generation) { root.stopMarks(""); return }
+            if (root.markGeneration !== root.generation) {
+                root.fenceLists(root.markContext, true)
+                root.stopMarks("")
+                return
+            }
             try {
                 var data = root.result(markOutput.text, code)
                 if (data.id !== root.markId || data.seen !== root.markSeen)
                     throw new Error("Invalid read-status response from mail helper.")
+                root.patchSnapshots(root.markContext, root.markId, root.markSeen)
                 root.messages = root.messages.map(function(m) {
                     if (m.id !== root.markId) return m
                     var updated = Object.assign({}, m)

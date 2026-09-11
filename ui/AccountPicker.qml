@@ -45,7 +45,8 @@ Rectangle {
                     Layout.fillWidth: true
                     text: {
                         var id = String(modelData)
-                        return String(Object.prototype.hasOwnProperty.call(view.labels, id) ? view.labels[id] : id)
+                        var available = view.labels && typeof view.labels === "object" ? view.labels : ({})
+                        return String(Object.prototype.hasOwnProperty.call(available, id) ? available[id] : id)
                     }
                     elide: Text.ElideRight
                 }

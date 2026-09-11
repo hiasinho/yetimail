@@ -15,7 +15,9 @@ FocusScope {
     property int currentIndex: 0
     property string requestedAccountId: ""
     property bool accountsUpdating: false
-    readonly property var selectedAccount: accounts[currentIndex] || null
+    readonly property var safeAccounts: Array.isArray(accounts) ? accounts : []
+    readonly property var selectedAccount: safeAccounts[currentIndex] || null
+    readonly property string selectedStoredLabel: selectedAccount ? String(selectedAccount.label || "") : ""
     readonly property Item focusTarget: accountList
     signal dismissRequested()
     signal retryRequested()
@@ -30,9 +32,9 @@ FocusScope {
         return String(account.label || accountId(account))
     }
     function selectRequestedAccount() {
-        var index = accounts.findIndex(function(account) { return accountId(account) === requestedAccountId })
+        var index = safeAccounts.findIndex(function(account) { return accountId(account) === requestedAccountId })
         if (index < 0 && !requestedAccountId)
-            index = accounts.findIndex(function(account) { return account && account.default === true })
+            index = safeAccounts.findIndex(function(account) { return account && account.default === true })
         currentIndex = Math.max(0, index)
         accountList.currentIndex = currentIndex
         syncEditor()
@@ -118,14 +120,14 @@ FocusScope {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
-                    model: view.accounts
+                    model: view.safeAccounts
                     activeFocusOnTab: true
                     keyNavigationEnabled: true
                     currentIndex: view.currentIndex
                     onCurrentIndexChanged: if (currentIndex >= 0) {
                         view.currentIndex = currentIndex
-                        if (!view.accountsUpdating && view.accounts[currentIndex])
-                            view.requestedAccountId = view.accountId(view.accounts[currentIndex])
+                        if (!view.accountsUpdating && view.safeAccounts[currentIndex])
+                            view.requestedAccountId = view.accountId(view.safeAccounts[currentIndex])
                     }
                     ScrollBar.vertical: ScrollBar {}
                     delegate: Rectangle {
@@ -165,11 +167,11 @@ FocusScope {
                         visible: !!view.error
                         Layout.fillWidth: true
                         spacing: 8
-                        MailLabel { Layout.fillWidth: true; text: view.error; color: Color.urgent; wrapMode: Text.WordWrap }
+                        MailLabel { Layout.fillWidth: true; text: view.error; color: Color.accent; wrapMode: Text.WordWrap }
                         MailButton { text: "Retry"; enabled: !view.loading; onClicked: view.retryRequested() }
                     }
                     MailLabel {
-                        visible: !view.loading && !view.error && !view.accounts.length
+                        visible: !view.loading && !view.error && !view.safeAccounts.length
                         Layout.fillWidth: true
                         text: "No Himalaya accounts were found."
                         wrapMode: Text.WordWrap
@@ -198,7 +200,7 @@ FocusScope {
                                 objectName: "saveAccountLabelButton"
                                 text: view.saving ? "Saving…" : "Save label"
                                 enabled: !view.saving && !!view.selectedAccount
-                                    && labelField.text.trim() !== String(view.selectedAccount.label || "")
+                                    && labelField.text.trim() !== view.selectedStoredLabel
                                 onClicked: view.saveLabelRequested(view.accountId(view.selectedAccount), labelField.text.trim())
                             }
                         }

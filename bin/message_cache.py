@@ -76,6 +76,9 @@ class MessageCache:
     performs no filesystem operations. No connection is retained between calls.
     """
 
+    database_name = "messages.sqlite3"
+    disabled_name = "disabled"
+
     def __init__(self, directory=None, *, ttl_seconds=TTL_SECONDS,
                  max_bytes=MAX_BYTES, max_entry_bytes=MAX_ENTRY_BYTES,
                  clock=time.time, timeout=0.25):
@@ -109,7 +112,7 @@ class MessageCache:
         directory = self._directory()
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._private(directory, directory=True)
-        disabled = directory / "disabled"
+        disabled = directory / self.disabled_name
         if not allow_disabled:
             try:
                 self._private(disabled)
@@ -117,7 +120,7 @@ class MessageCache:
                 pass
             else:
                 raise OSError("Cache disabled after failed invalidation")
-        path = directory / "messages.sqlite3"
+        path = directory / self.database_name
         fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         os.close(fd)
         self._private(path)
@@ -271,7 +274,7 @@ class MessageCache:
             directory = self._directory()
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             self._private(directory, directory=True)
-            path = directory / "disabled"
+            path = directory / self.disabled_name
             fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
             os.close(fd)
             self._private(path)
@@ -284,7 +287,7 @@ class MessageCache:
         if not self._remove("DELETE FROM messages", (), allow_disabled=True):
             return False
         try:
-            (self._directory() / "disabled").unlink(missing_ok=True)
+            (self._directory() / self.disabled_name).unlink(missing_ok=True)
             return True
         except OSError:
             return False
@@ -302,3 +305,37 @@ class MessageCache:
             return True
         except _FAILURES:
             return False
+
+
+class FolderSnapshotCache(MessageCache):
+    """Revalidated folder discovery snapshots, retained for up to 30 days.
+
+    Separate storage keeps short-lived list pruning from expiring folders.
+    Inherits private paths, bounded LRU storage and clear-generation checks.
+    """
+
+    database_name = "folders.sqlite3"
+    disabled_name = "folders-disabled"
+
+    def __init__(self, directory=None, **kwargs):
+        kwargs.setdefault("max_bytes", 10 * 1024 * 1024)
+        kwargs.setdefault("max_entry_bytes", 1024 * 1024)
+        super().__init__(directory, **kwargs)
+
+
+class ListSnapshotCache(MessageCache):
+    """Revalidated normalized pages, isolated from the message-body cache.
+
+    Reuses private SQLite handling, size limits, LRU and invalidation epochs.
+    Long retention is safe because snapshots are displayed stale-while-refresh.
+    """
+
+    database_name = "lists.sqlite3"
+    disabled_name = "lists-disabled"
+
+    def __init__(self, directory=None, **kwargs):
+        # Snapshots are stale-while-revalidate hints, never authoritative.
+        kwargs.setdefault("ttl_seconds", 30 * 24 * 60 * 60)
+        kwargs.setdefault("max_bytes", 10 * 1024 * 1024)
+        kwargs.setdefault("max_entry_bytes", 1024 * 1024)
+        super().__init__(directory, **kwargs)

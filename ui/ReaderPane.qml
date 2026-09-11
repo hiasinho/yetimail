@@ -44,11 +44,19 @@ ColumnLayout {
     signal attachmentMoved(int delta)
     signal attachmentActionRequested(bool openAfter)
     signal readerFocused()
+    signal readerScrollChanged(real contentY)
     required property real panelWidth
     readonly property real availableHeight: reader.availableHeight
     function focusBody() { messageText.forceActiveFocus() }
     function focusLinks() { linkList.forceActiveFocus() }
     function revealLink(index) { linkList.positionViewAtIndex(index, ListView.Contain) }
+    function readerScrollY() { return reader.contentItem.contentY }
+    function restoreReaderScroll(contentY) {
+        Qt.callLater(function() {
+            var flick = reader.contentItem
+            flick.contentY = Math.max(0, Math.min(Math.max(0, flick.contentHeight - flick.height), Number(contentY) || 0))
+        })
+    }
     function scroll(delta) {
         var flick = reader.contentItem
         flick.contentY = Math.max(0, Math.min(Math.max(0, flick.contentHeight - flick.height), flick.contentY + delta))
@@ -273,6 +281,10 @@ ColumnLayout {
                 (view.showHeaders ? "Subject: " + view.message.subject + "\nFrom: " + view.message.from + "\nTo: " + view.message.to + "\nDate: " + view.message.date + "\n\n" : "") + view.message.body :
                 "Select a message with j/k, then press Enter to read.\n\nOpening a message does not mark it as read. Use m / u to change its status."
             onTextChanged: { cursorPosition = 0; reader.contentItem.contentY = 0 }
+        }
+        Connections {
+            target: reader.contentItem
+            function onContentYChanged() { view.readerScrollChanged(reader.contentItem.contentY) }
         }
     }
 }

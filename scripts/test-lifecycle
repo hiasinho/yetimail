@@ -45,7 +45,7 @@ cat > "$work/python-fixture" <<'SH'
 # Deliberately do not execute argv[1] (the production Python helper).
 shift
 operation=$1; shift
-account=default config=none demo=false id=none
+account=default config=none demo=false id=none cache_only=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --account) account=$2; shift 2 ;;
@@ -55,9 +55,14 @@ while [ "$#" -gt 0 ]; do
         --demo) demo=true; shift ;;
         --id) id=$2; shift 2 ;;
         --page) shift 2 ;;
+        --cache-only) cache_only=true; shift ;;
         *) printf 'BAD ARGUMENT\n' >> "$YETIMAIL_CALLS"; exit 98 ;;
     esac
 done
+if [ "$cache_only" = true ]; then
+    printf '{"hit":false,"value":null}\n'
+    exit 0
+fi
 # Keep discovery separate from the list/read invocation assertions.
 if [ "$operation" = folders ]; then
     printf '{"folders":[{"id":"INBOX","name":"Inbox","role":"inbox"}]}\n'

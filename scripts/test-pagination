@@ -30,7 +30,7 @@ if [ "$YETIMAIL_SCENARIO" = demo ]; then
     exit 99
 fi
 operation=$1; shift
-account=default id=none page=1 seen=none
+account=default id=none page=1 seen=none cache_only=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --account) account=$2; shift 2 ;;
@@ -40,9 +40,14 @@ while [ "$#" -gt 0 ]; do
         --page) page=$2; shift 2 ;;
         --seen) seen=true; shift ;;
         --unseen) seen=false; shift ;;
+        --cache-only) cache_only=true; shift ;;
         *) printf 'BAD ARGUMENT\n' >> "$YETIMAIL_CALLS"; exit 98 ;;
     esac
 done
+if [ "$cache_only" = true ]; then
+    printf '{"hit":false,"value":null}\n'
+    exit 0
+fi
 # Folder discovery is orthogonal to the pagination assertions below.
 if [ "$operation" = folders ]; then
     printf '{"folders":[{"id":"INBOX","name":"Inbox","role":"inbox"}]}\n'
@@ -179,15 +184,19 @@ ShellRoot {
             case 6:
                 if (!test.check(!mail.messages[0].unread && mail.actionError === "fixture mark failure", "failed mark changed envelope")) return
                 mail.previousPage()
-                if (!test.check(mail.page === 2 && !mail.actionError, "previous page committed early")) return
+                if (!test.check(mail.page === 1 && !mail.loading && mail.refreshing && !mail.actionError,
+                                "cached previous page was not restored immediately")) return
                 break
             case 7:
                 if (!test.check(mail.page === 1, "previous page success")) return
-                mail.setRead("shared", true)
+                mail.setRead("shared", false)
                 // Change account before Process launch; command must retain the old snapshot.
                 mail.account = "hiasinho"
                 if (!test.check(mail.marking && mail.page === 1 && !mail.messages.length &&
-                                !mail.hasNext && !mail.actionError && !mail.selectedId, "account reset during mark")) return
+                                !mail.hasNext && !mail.actionError && !mail.selectedId,
+                                "account reset during mark: marking=" + mail.marking + " page=" + mail.page
+                                + " messages=" + mail.messages.length + " hasNext=" + mail.hasNext
+                                + " actionError=" + mail.actionError + " selected=" + mail.selectedId)) return
                 break
             case 8:
                 if (!mail.messages.length) return
@@ -309,17 +318,20 @@ for scenario in fixture demo; do
         cat > "$work/expected.calls" <<'CALLS'
 list account=hiash id=none page=1 seen=none
 list account=hiash id=none page=2 seen=none
+list account=hiash id=none page=3 seen=none
 read account=hiash id=shared page=1 seen=none
 list account=hiash id=none page=3 seen=none
 list account=hiash id=none page=2 seen=none
 mark account=hiash id=shared page=1 seen=true
 mark account=hiash id=shared page=1 seen=false
 list account=hiash id=none page=1 seen=none
-mark account=hiash id=shared page=1 seen=true
+mark account=hiash id=shared page=1 seen=false
 list account=hiasinho id=none page=1 seen=none
 list account=hiasinho id=none page=2 seen=none
 list account=final id=none page=1 seen=none
+list account=final id=none page=2 seen=none
 list account=default id=none page=1 seen=none
+list account=default id=none page=2 seen=none
 list account=batch-success id=none page=1 seen=none
 mark account=batch-success id=third page=1 seen=true
 mark account=batch-success id=other page=1 seen=true

@@ -18,12 +18,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from attachments import AttachmentError, metadata as attachment_metadata, save as save_attachment
 from mailbox_config import MailboxConfigError, check_literal_mailbox, config_paths, merge, tomllib
 from account_settings import AccountSettingsError, account_labels, account_overview, set_account_label
-from message_cache import CacheKey, MessageCache
+from message_cache import CacheKey, MessageCache, ListSnapshotCache, FolderSnapshotCache
 
 
 TIMEOUT = 30
 PAGE_SIZE = 50
 MESSAGE_PARSER_VERSION = "1"
+LIST_PARSER_VERSION = "1"
+FOLDER_PARSER_VERSION = "1"
 
 
 class HelperError(Exception):
@@ -301,6 +303,7 @@ def read_message(args):
 
 
 def invalidate_message(args):
+    invalidate_list_snapshots(args)
     cache, context = message_cache(args, require_identity=False)
     if cache:
         # Alias resolution is backend-dependent. Invalidate this raw ID across
@@ -312,7 +315,44 @@ def invalidate_message(args):
             cache.disable()
 
 
+def folder_snapshot_cache(args):
+    cache, context = message_cache(args, require_identity=False)
+    return (FolderSnapshotCache(), context) if cache else (None, None)
+
+
+def folder_snapshot_key(context):
+    return CacheKey(context, "", "folders", FOLDER_PARSER_VERSION)
+
+
+def valid_folder_snapshot(value):
+    if not isinstance(value, dict) or not isinstance(value.get("folders"), list):
+        return False
+    ids = set()
+    for folder in value["folders"]:
+        if not isinstance(folder, dict) or any(
+                not isinstance(folder.get(key), str) or not folder[key]
+                or any(ord(char) < 32 or ord(char) == 127 for char in folder[key])
+                for key in ("id", "name")):
+            return False
+        if folder["id"] in ids or ("role" in folder and folder["role"] not in
+                                               ("inbox", "sent", "archive", "trash")):
+            return False
+        ids.add(folder["id"])
+    return True
+
+
+def cached_folders(args):
+    """Probe only private storage; never fall back to Himalaya."""
+    cache, context = folder_snapshot_cache(args)
+    lookup = cache.get(folder_snapshot_key(context)) if cache else None
+    hit = bool(lookup and lookup.hit and valid_folder_snapshot(lookup.value)
+               and cache_context(args) == context)
+    return {"hit": hit, "value": lookup.value if hit else None}
+
+
 def list_folders(args):
+    cache, context = folder_snapshot_cache(args)
+    lookup = cache.get(folder_snapshot_key(context)) if cache else None
     raw = run_himalaya(args, ["--json", "mailbox", "list"])
     try:
         mailboxes = json.loads(raw)["mailboxes"]
@@ -334,7 +374,10 @@ def list_folders(args):
             folders.append(folder)
     except (ValueError, TypeError, KeyError, AttributeError):
         raise HelperError("Invalid mailbox response from Himalaya") from None
-    return {"folders": folders}
+    result = {"folders": folders}
+    if cache and lookup and cache_context(args) == context:
+        cache.put(folder_snapshot_key(context), result, generation=lookup.generation)
+    return result
 
 
 def envelope_fingerprint(envelope):
@@ -361,7 +404,58 @@ def envelope_fingerprint(envelope):
     ).encode("utf-8")).hexdigest()
 
 
+def list_snapshot_key(context, args):
+    return CacheKey(context, args.mailbox, str(args.page),
+                    LIST_PARSER_VERSION, str(PAGE_SIZE))
+
+
+def list_snapshot_cache(args):
+    cache, context = message_cache(args, require_identity=False)
+    return (ListSnapshotCache(), context) if cache else (None, None)
+
+
+def invalidate_list_snapshots(args):
+    cache, context = list_snapshot_cache(args)
+    if cache:
+        # Flags and moves shift pages; aliases and destination IDs are opaque.
+        # Invalidate all pages in this account, including pending refresh puts.
+        cache.invalidate(context)
+
+
+def valid_list_snapshot(value, page):
+    if (not isinstance(value, dict) or value.get("page") != page
+            or not isinstance(value.get("hasNext"), bool)
+            or not isinstance(value.get("messages"), list)):
+        return False
+    return all(isinstance(message, dict)
+               and all(isinstance(message.get(key), str)
+                       for key in ("id", "subject", "from", "date", "cacheIdentity"))
+               and isinstance(message.get("unread"), bool)
+               for message in value["messages"])
+
+
+def cached_list_messages(args):
+    """Cache-only probe: never launch Himalaya, including on misses/errors."""
+    cache, context = list_snapshot_cache(args)
+    lookup = cache.get(list_snapshot_key(context, args)) if cache else None
+    if (lookup and lookup.hit and valid_list_snapshot(lookup.value, args.page)
+            and cache_context(args) == context):
+        # Account display spelling is not part of the effective cache identity.
+        value = dict(lookup.value, account=args.account or "Default")
+        return {"hit": True, "value": value}
+    return {"hit": False, "value": None}
+
+
 def list_messages(args):
+    cache, context = list_snapshot_cache(args)
+    lookup = cache.get(list_snapshot_key(context, args)) if cache else None
+    result = fetch_list_messages(args)
+    if cache and lookup and cache_context(args) == context:
+        cache.put(list_snapshot_key(context, args), result, generation=lookup.generation)
+    return result
+
+
+def fetch_list_messages(args):
     raw = run_himalaya(args, ["--json", "envelope", "search", "--page-size", str(PAGE_SIZE),
                               "--page", str(args.page)] + mailbox_args(args) +
                        ["order", "by", "date", "desc"])
@@ -450,6 +544,7 @@ DEMO_MESSAGES.extend({
 def mark_message(args):
     run_himalaya(args, ["flag", "add" if args.seen else "remove", "--flag", "seen",
                        *mailbox_args(args), "--", args.id])
+    invalidate_list_snapshots(args)
     return {"id": args.id, "seen": args.seen}
 
 
@@ -517,6 +612,7 @@ def main(argv=None):
     parser.add_argument("--attachment", help="content-bound attachment ID (save only)")
     parser.add_argument("--cache-identity", help="SHA-256 identity from the current envelope list (read only)")
     parser.add_argument("--force", action="store_true", help="bypass and replace cache (read only)")
+    parser.add_argument("--cache-only", action="store_true", help="return a cached snapshot without Himalaya; miss returns hit=false (list or folders only)")
     flags = parser.add_mutually_exclusive_group()
     flags.add_argument("--seen", dest="seen", action="store_true", default=None)
     flags.add_argument("--unseen", dest="seen", action="store_false")
@@ -524,6 +620,8 @@ def main(argv=None):
     parser.add_argument("--label", help="Yetimail friendly label (account-label only; empty removes it)")
     try:
         args = parser.parse_args(argv)
+        if args.cache_only and args.command not in ("list", "folders"):
+            raise HelperError("--cache-only is only supported for list or folders")
         if args.command in ("accounts", "account-label", "account-labels"):
             if any(value is not None for value in (args.mailbox, args.id, args.destination,
                     args.attachment, args.cache_identity, args.page, args.seen)) or args.force:
@@ -551,7 +649,10 @@ def main(argv=None):
                 raise HelperError("cache-clear is not available in demo mode")
             if any(value is not None for value in (args.id, args.destination, args.attachment, args.cache_identity, args.page, args.seen)):
                 raise HelperError("cache-clear does not accept message options")
-            result = {"cleared": MessageCache().clear()}
+            bodies_cleared = MessageCache().clear()
+            lists_cleared = ListSnapshotCache().clear()
+            folders_cleared = FolderSnapshotCache().clear()
+            result = {"cleared": bodies_cleared and lists_cleared and folders_cleared}
             print(json.dumps(result))
             return 0 if result["cleared"] else 1
         if args.command == "delete":
@@ -584,7 +685,7 @@ def main(argv=None):
         if args.attachment is not None and not re.fullmatch(r"[1-9][0-9]*-[0-9a-f]{64}", args.attachment):
             raise HelperError("Invalid attachment ID")
         args.page = args.page or 1
-        if not args.demo and args.command != "folders":
+        if not args.demo and not args.cache_only and args.command != "folders":
             check_literal_mailbox(args)
         if args.command == "save":
             if args.demo and args.id != "demo-1":
@@ -595,6 +696,10 @@ def main(argv=None):
             result = {"id": args.id, **save_attachment(BytesParser(policy=policy.default).parsebytes(raw), args.attachment)}
         elif args.demo:
             result = demo(args)
+            if args.cache_only:
+                result = {"hit": True, "value": result}
+        elif args.cache_only:
+            result = cached_folders(args) if args.command == "folders" else cached_list_messages(args)
         elif args.command == "folders":
             result = list_folders(args)
         elif args.command == "list":

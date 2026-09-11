@@ -51,6 +51,7 @@ ColumnLayout {
     signal helpRequested()
     signal retryMovesRequested()
     signal cancelMovesRequested()
+    signal listScrollChanged(real contentY)
     readonly property point accountAnchor: Qt.point(pickerRow.x + accountButton.x, pickerRow.y + accountButton.y + accountButton.height + 2)
     readonly property point folderAnchor: Qt.point(pickerRow.x + folderButton.x, pickerRow.y + folderButton.y + folderButton.height + 2)
     readonly property real desiredListHeight: Math.max(90, Math.min(7, messages.length) * 68)
@@ -59,6 +60,13 @@ ColumnLayout {
     readonly property Item focusTarget: inbox
     function focusList() { inbox.forceActiveFocus() }
     function reveal(index) { inbox.positionViewAtIndex(index, ListView.Contain) }
+    function listScrollY() { return inbox.contentY }
+    function restoreListScroll(contentY) {
+        Qt.callLater(function() {
+            var maximum = Math.max(0, inbox.contentHeight - inbox.height)
+            inbox.contentY = Math.max(0, Math.min(maximum, Number(contentY) || 0))
+        })
+    }
     function senderName(from) {
         var value = String(from || "")
         var name = value.replace(/\s*<[^>]*>\s*$/, "").trim().replace(/^"(.*)"$/, "$1")
@@ -149,6 +157,7 @@ ColumnLayout {
     ListView {
         id: inbox
         onActiveFocusChanged: if (activeFocus) view.listFocused()
+        onContentYChanged: view.listScrollChanged(contentY)
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.preferredHeight: view.desiredListHeight

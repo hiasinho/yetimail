@@ -49,6 +49,45 @@ BarWidget {
     }
     property string pane: "list"
     property string cursorId: ""
+    // Cursor and scroll snapshots are UI-only and never restore selections,
+    // readers, or destructive confirmations across mailbox contexts.
+    property var viewStateByPage: ({})
+    property var readerStateByMessage: ({})
+    property bool readerStateReady: false
+    function viewStateKey(account, folder, pageNumber) {
+        return JSON.stringify([String(mail.config), !!mail.demo, String(account), String(folder), Number(pageNumber)])
+    }
+    function readerStateKey(messageId) {
+        return JSON.stringify([String(mail.config), !!mail.demo, String(mail.account), String(mail.folderId), String(messageId)])
+    }
+    function saveReaderState() {
+        if (!readerStateReady || !mail.ready || !mail.selectedId || !mail.message) return
+        var next = Object.assign({}, readerStateByMessage)
+        next[readerStateKey(mail.selectedId)] = {contentY: readerPane.readerScrollY()}
+        readerStateByMessage = next
+    }
+    function restoreReaderState() {
+        if (!mail.selectedId || !mail.message) return
+        var state = readerStateByMessage[readerStateKey(mail.selectedId)]
+        readerPane.restoreReaderScroll(state ? state.contentY : 0)
+    }
+    function saveViewState() {
+        saveReaderState()
+        if (!mail.ready || !mail.messages.length || !cursorId) return
+        var next = Object.assign({}, viewStateByPage)
+        next[viewStateKey(mail.account, mail.folderId, mail.page)] = {
+            cursorId: String(cursorId || ""),
+            contentY: sidebar.listScrollY()
+        }
+        viewStateByPage = next
+    }
+    function restoreViewState() {
+        var state = viewStateByPage[viewStateKey(mail.account, mail.folderId, mail.page)]
+        if (state && mail.messages.some(function(message) { return String(message.id) === String(state.cursorId) })) {
+            cursorId = String(state.cursorId)
+            sidebar.restoreListScroll(state.contentY)
+        } else syncCursor()
+    }
     property var selectedIds: []
     property string selectionAnchorId: ""
     readonly property int selectedCount: selectedIds.length
@@ -176,7 +215,7 @@ BarWidget {
         if (typeof mail.setPrefetchSelection === "function")
             mail.setPrefetchSelection(opened && pane === "list" ? cursorId : "")
     }
-    onCursorIdChanged: updatePrefetchSelection()
+    onCursorIdChanged: { updatePrefetchSelection(); Qt.callLater(saveViewState) }
     onPaneChanged: { cancelDelete(false); updatePrefetchSelection() }
     readonly property bool switchingBlocked: confirmingDelete || mail.deleting || mail.movePending || mail.marking || mail.savingAttachment || mail.openingAttachment
     readonly property var accountChoices: accounts.length ? accounts : [currentAccount || mail.accountLabel]
@@ -332,10 +371,14 @@ BarWidget {
             var clearAcceptedSelection = pane === "list"
             if (mail.moveMessages(ids, folder.id)) { if (clearAcceptedSelection) clearSelection(); dismissFolders() }
             else moveNextId = ""
-        } else if (mail.selectFolder(folder.id) !== false) dismissFolders()
+        } else {
+            saveViewState()
+            if (mail.selectFolder(folder.id) !== false) dismissFolders()
+        }
     }
     function goFolderRole(role) {
         if (showHelp || showAccounts || showFolders || switchingBlocked) return
+        saveViewState()
         mail.selectFolderRole(role)
     }
     function toggleHelp() {
@@ -456,7 +499,10 @@ BarWidget {
     readonly property bool busy: mail.deleting || mail.loading || mail.reading || mail.marking || mail.movePaused || mail.savingAttachment || mail.openingAttachment
 
     function selectAccount(name) {
-        if (accounts.indexOf(name) !== -1 && !switchingBlocked && !showHelp) selectedAccount = name
+        if (accounts.indexOf(name) !== -1 && !switchingBlocked && !showHelp) {
+            saveViewState()
+            selectedAccount = name
+        }
     }
     function moveAccount(delta) {
         if (accounts.length < 2) return
@@ -471,15 +517,16 @@ BarWidget {
         if (showHelp) return
         if (showAttachments) { showAttachments = false; readerPane.focusBody() }
         else if (showLinks) { showLinks = false; readerPane.focusBody() }
-        else focusList()
+        else { saveReaderState(); focusList() }
     }
     function syncCursor() {
-        if (cursorIndex < 0) {
+        var repaired = cursorIndex < 0
+        if (repaired) {
             cursorId = moveNextId && mail.messages.some(function(message) { return message.id === root.moveNextId })
                 ? moveNextId : mail.messages.length ? mail.messages[0].id : ""
         }
         moveNextId = ""
-        Qt.callLater(function() {
+        if (repaired) Qt.callLater(function() {
             if (root.cursorIndex >= 0) sidebar.reveal(root.cursorIndex)
         })
     }
@@ -518,6 +565,8 @@ BarWidget {
     }
     function openCurrent() {
         if (!cursorId || busy || showHelp || showAccounts || showFolders) return
+        saveReaderState()
+        readerStateReady = false
         mail.readMessage(cursorId)
         pane = "reader"
         readerPane.focusBody()
@@ -551,11 +600,17 @@ BarWidget {
         else if (selectedIds.length) clearSelection()
         else close()
     }
+    function warmAllowedAccounts() {
+        if (typeof mail.warmAccounts === "function") mail.warmAccounts(accounts)
+    }
     Component.onCompleted: {
         Qt.callLater(mail.loadAccountLabels)
         Qt.callLater(mail.loadAccountOverview)
+        accountWarmTimer.restart()
     }
-    onCurrentAccountChanged: { cancelDelete(false); clearSelection(); moveNextId = ""; moveTargetIds = []; movePicker = false; cursorId = ""; pane = "list"; showHelp = false; showSettings = false; showAccounts = false; showFolders = false; showLinks = false; showHeaders = false; showAttachments = false }
+    // Permission changes take effect synchronously; only the initial warm is delayed.
+    onAccountsChanged: warmAllowedAccounts()
+    onCurrentAccountChanged: { cancelDelete(false); clearSelection(); moveNextId = ""; moveTargetIds = []; movePicker = false; cursorId = ""; pane = "list"; showHelp = false; showSettings = false; showAccounts = false; showFolders = false; showLinks = false; showHeaders = false; showAttachments = false; accountWarmTimer.restart() }
     onOpenedChanged: {
         cancelDelete(false)
         if (opened) { showHelp = false; Qt.callLater(focusList) }
@@ -578,7 +633,7 @@ BarWidget {
                 mail.loadAccountOverview()
             }
         }
-        function onConfigChanged() { if (mail.active) mail.loadAccountOverview() }
+        function onConfigChanged() { root.viewStateByPage = ({}); root.readerStateByMessage = ({}); if (mail.active) { mail.loadAccountOverview(); accountWarmTimer.restart() } }
         function onGenerationChanged() {
             root.cancelDelete(false)
             if (root.showAccounts) root.dismissAccounts()
@@ -586,7 +641,7 @@ BarWidget {
             root.clearSelection()
             root.moveNextId = ""
         }
-        function onMessagesChanged() { root.cancelDelete(false); root.pruneSelection(); root.syncCursor(); Qt.callLater(root.updatePrefetchSelection) }
+        function onMessagesChanged() { root.cancelDelete(false); root.pruneSelection(); Qt.callLater(root.restoreViewState); Qt.callLater(root.updatePrefetchSelection) }
         function onLoadingChanged() { if (mail.loading) root.cancelDelete(false) }
         function onReadingChanged() { if (mail.reading) root.cancelDelete(false) }
         function onPageChanged() { root.cancelDelete(false); root.clearSelection() }
@@ -599,7 +654,20 @@ BarWidget {
         function onOpeningAttachmentChanged() { if (mail.openingAttachment) root.cancelDelete(false) }
         function onFoldersChanged() { root.preserveFolderCursor() }
         function onFolderIdChanged() { root.cancelDelete(false); root.clearSelection(); root.showAccounts = false; root.showFolders = false; root.movePicker = false; root.moveTargetIds = []; root.moveNextId = ""; root.cursorId = ""; root.pane = "list"; root.showLinks = false; root.showHeaders = false; root.showAttachments = false }
-        function onMessageChanged() { root.cancelDelete(false); root.agentStatus = ""; root.showLinks = false; root.showHeaders = false; root.showAttachments = false; root.linkIndex = 0; root.attachmentIndex = 0 }
+        function onMessageChanged() {
+            root.cancelDelete(false)
+            root.agentStatus = ""
+            root.showLinks = false
+            root.showHeaders = false
+            root.showAttachments = false
+            root.linkIndex = 0
+            root.attachmentIndex = 0
+            root.readerStateReady = false
+            Qt.callLater(function() {
+                root.restoreReaderState()
+                Qt.callLater(function() { root.readerStateReady = !!mail.message })
+            })
+        }
         function onSelectedIdChanged() { root.cancelDelete(false); if (!mail.selectedId) root.pane = "list" }
     }
     Process {
@@ -621,6 +689,12 @@ BarWidget {
         onExited: function(code, status) {
             root.finishAgentLaunch(code === 0 ? "" : "Could not open Ask agent. Check your default Omarchy agent.")
         }
+    }
+    Timer {
+        id: accountWarmTimer
+        interval: 750
+        repeat: false
+        onTriggered: root.warmAllowedAccounts()
     }
     Timer {
         interval: Math.max(30, Number(root.setting("refreshSeconds", 120)) || 120) * 1000
@@ -677,8 +751,8 @@ BarWidget {
             Shortcut { sequence: "Ctrl+D"; enabled: root.opened && !root.interactionBlocked; onActivated: root.halfPage(1) }
             Shortcut { sequence: "Ctrl+U"; enabled: root.opened && !root.interactionBlocked; onActivated: root.halfPage(-1) }
             Shortcut { sequences: ["Tab", "Shift+Tab"]; enabled: root.opened && !root.interactionBlocked; onActivated: root.switchPane() }
-            Shortcut { sequence: "N"; enabled: root.opened && !root.interactionBlocked && !root.busy && !root.showAccounts && !root.showFolders && !root.showHelp; onActivated: mail.nextPage() }
-            Shortcut { sequence: "P"; enabled: root.opened && !root.interactionBlocked && !root.busy && !root.showAccounts && !root.showFolders && !root.showHelp; onActivated: mail.previousPage() }
+            Shortcut { sequence: "N"; enabled: root.opened && !root.interactionBlocked && !root.busy && !root.showAccounts && !root.showFolders && !root.showHelp; onActivated: { root.saveViewState(); mail.nextPage() } }
+            Shortcut { sequence: "P"; enabled: root.opened && !root.interactionBlocked && !root.busy && !root.showAccounts && !root.showFolders && !root.showHelp; onActivated: { root.saveViewState(); mail.previousPage() } }
             Shortcut { sequence: "["; enabled: root.opened && !root.interactionBlocked; onActivated: root.moveAccount(-1) }
             Shortcut { sequence: "]"; enabled: root.opened && !root.interactionBlocked; onActivated: root.moveAccount(1) }
             Shortcut { sequence: "Shift+M"; autoRepeat: false; enabled: root.opened && !root.interactionBlocked; onActivated: root.openMovePicker() }
@@ -745,11 +819,12 @@ BarWidget {
                     onBulkArchiveRequested: { root.focusList(); root.moveToRole("archive") }
                     onBulkTrashRequested: { root.focusList(); root.moveToRole("trash") }
                     onBulkMoveRequested: { root.focusList(); root.openMovePicker() }
-                    onPreviousRequested: mail.previousPage()
-                    onNextRequested: mail.nextPage()
+                    onPreviousRequested: { root.saveViewState(); mail.previousPage() }
+                    onNextRequested: { root.saveViewState(); mail.nextPage() }
                     onHelpRequested: root.toggleHelp()
                     onRetryMovesRequested: mail.retryMoves()
                     onCancelMovesRequested: mail.cancelPendingMoves()
+                    onListScrollChanged: root.saveViewState()
                 }
                 Rectangle { Layout.fillHeight: true; width: 1; color: Color.foreground; opacity: 0.15 }
                 ReaderPane {
@@ -793,6 +868,7 @@ BarWidget {
                     onAttachmentMoved: function(delta) { root.moveAttachment(delta) }
                     onAttachmentActionRequested: function(openAfter) { root.attachmentAction(openAfter) }
                     onReaderFocused: { if (mail.selectedId) root.pane = "reader" }
+                    onReaderScrollChanged: root.saveReaderState()
                 }
             }
             DeleteConfirmation {

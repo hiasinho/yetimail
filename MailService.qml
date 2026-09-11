@@ -194,6 +194,16 @@ Item {
     property int readGeneration: 0
     property int listRequest: 0
     property int readRequest: 0
+    // Background reads only warm the helper's SQLite cache. They never alter
+    // message/readError unless an open promotes the same in-flight request.
+    property string prefetchSelection: ""
+    property var prefetchQueue: []
+    property bool prefetching: false
+    property string prefetchId: ""
+    property int prefetchGeneration: 0
+    property int prefetchListRequest: 0
+    property int prefetchRequest: 0
+    property bool prefetchForeground: false
     property int requestedPage: 1
     property int markGeneration: 0
     property int markRequest: 0
@@ -210,6 +220,14 @@ Item {
         return args
     }
 
+    function messageReadCommand(id) {
+        var args = command("read").concat(["--id", id])
+        var envelope = messages.find(function(m) { return m.id === id })
+        if (envelope && typeof envelope.cacheIdentity === "string" && /^[0-9a-f]{64}$/.test(envelope.cacheIdentity))
+            args.push("--cache-identity", envelope.cacheIdentity)
+        return args
+    }
+
     function reset() {
         discoveryGeneration++
         folders = []
@@ -222,7 +240,44 @@ Item {
         resetMessages()
     }
 
+    function invalidatePrefetch() {
+        prefetchTimer.stop()
+        prefetchQueue = []
+        prefetchSelection = ""
+        prefetchRequest++
+        // A promoted request is now a foreground read and must survive the
+        // Widget switching from list to reader.
+        if (!prefetchForeground) prefetchId = ""
+    }
+
+    function setPrefetchSelection(id) {
+        if (demo || !ready || !active || typeof id !== "string") return
+        prefetchSelection = id
+        prefetchQueue = []
+        prefetchRequest++
+        prefetchTimer.stop()
+        if (!id) return
+        var index = messages.findIndex(function(m) { return m.id === id })
+        if (index < 0) return
+        prefetchQueue = messages.slice(index, index + 3).map(function(m) { return String(m.id) })
+        prefetchTimer.restart()
+    }
+
+    function startPrefetch() {
+        if (!prefetchQueue.length || prefetching || reading || loading || deleting || moving || marking
+            || savingAttachment || openingAttachment || !active) return
+        prefetchId = prefetchQueue[0]
+        prefetchQueue = prefetchQueue.slice(1)
+        prefetchGeneration = generation
+        prefetchListRequest = listRequest
+        prefetchForeground = false
+        prefetching = true
+        prefetchProcess.command = messageReadCommand(prefetchId)
+        prefetchProcess.running = true
+    }
+
     function resetMessages() {
+        invalidatePrefetch()
         generation++
         messages = []
         message = null
@@ -253,6 +308,7 @@ Item {
     function fetchPage(target) {
         if (!ready || !active || loading || deleting || moving || marking || (reading && target !== page)) return
         if (target !== page) {
+            invalidatePrefetch()
             selectedId = ""
             message = null
             readError = ""
@@ -305,6 +361,7 @@ Item {
             actionError = "Message is not on the current page."
             return false
         }
+        invalidatePrefetch()
         deleteGeneration = generation
         deleteAccount = account
         deleteFolder = folderId
@@ -353,6 +410,7 @@ Item {
             actionError = "Message is already in that folder."
             return false
         }
+        invalidatePrefetch()
         moveGeneration = generation
         moveAccount = account
         moveFolder = folderId
@@ -377,7 +435,15 @@ Item {
         readGeneration = generation
         reading = true
         readRequest++
-        readProcess.command = command("read").concat(["--id", selectedId])
+        if (prefetching && prefetchId === selectedId && prefetchGeneration === generation
+            && prefetchListRequest === listRequest) {
+            // Consume the already-running fetch instead of downloading twice.
+            prefetchForeground = true
+            prefetchQueue = []
+            prefetchTimer.stop()
+            return
+        }
+        readProcess.command = messageReadCommand(selectedId)
         readProcess.running = true
     }
 
@@ -545,6 +611,64 @@ Item {
             } catch (e) { root.listError = e.message }
         }
     }
+    Timer {
+        id: prefetchTimer
+        interval: 300
+        repeat: false
+        onTriggered: {
+            if (root.reading || root.loading || root.deleting || root.moving || root.marking
+                || root.savingAttachment || root.openingAttachment) restart()
+            else root.startPrefetch()
+        }
+    }
+    Process {
+        id: prefetchProcess
+        stdout: StdioCollector { id: prefetchOutput; waitForEnd: true }
+        stderr: StdioCollector { waitForEnd: true }
+        onRunningChanged: {
+            if (running) return
+            var id = root.prefetchId
+            Qt.callLater(function() {
+                if (!root.prefetching || prefetchProcess.running || id !== root.prefetchId) return
+                var foreground = root.prefetchForeground
+                root.prefetching = false
+                root.prefetchForeground = false
+                if (foreground) {
+                    root.reading = false
+                    if (root.readGeneration === root.generation && root.selectedId === id)
+                        root.readError = "Could not launch Python 3. Check that python3 is installed and on PATH."
+                }
+                root.prefetchId = ""
+                if (!foreground && !prefetchTimer.running) root.startPrefetch()
+            })
+        }
+        onExited: function(code, status) {
+            var id = root.prefetchId
+            var foreground = root.prefetchForeground
+            var current = root.prefetchGeneration === root.generation
+                && (foreground || root.prefetchListRequest === root.listRequest)
+            root.prefetching = false
+            root.prefetchForeground = false
+            root.prefetchId = ""
+            if (foreground) {
+                root.reading = false
+                if (!current || root.readGeneration !== root.generation || root.selectedId !== id) {
+                    if (root.readGeneration !== root.generation) Qt.callLater(root.refresh)
+                    return
+                }
+                try {
+                    var data = root.result(prefetchOutput.text, code)
+                    if (!data || data.id !== id) throw new Error("Invalid message response from mail helper.")
+                    root.message = data
+                } catch (e) { root.readError = e.message }
+                return
+            }
+            // Background failures are deliberately silent. A changed queue can
+            // still begin after this old process exits.
+            if ((current || root.prefetchQueue.length) && !prefetchTimer.running)
+                Qt.callLater(root.startPrefetch)
+        }
+    }
     Process {
         id: readProcess
         stdout: StdioCollector { id: readOutput; waitForEnd: true }
@@ -562,8 +686,12 @@ Item {
         onExited: function(code, status) {
             root.reading = false
             if (root.readGeneration !== root.generation) { Qt.callLater(root.refresh); return }
-            try { root.message = root.result(readOutput.text, code) }
-            catch (e) { root.readError = e.message }
+            try {
+                var data = root.result(readOutput.text, code)
+                if (!data || data.id !== root.selectedId) throw new Error("Invalid message response from mail helper.")
+                root.message = data
+            } catch (e) { root.readError = e.message }
+            if (root.prefetchQueue.length) Qt.callLater(root.startPrefetch)
         }
     }
     Process {

@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import runpy
 import subprocess
@@ -18,7 +19,9 @@ helper = runpy.run_path(str(HELPER))
 class HelperTest(unittest.TestCase):
     def invoke(self, *args):
         output = io.StringIO()
-        with contextlib.redirect_stdout(output):
+        # Ordinary protocol tests must never touch the developer's real cache.
+        cache_setting = "1" if getattr(self, "cache_enabled", False) else "0"
+        with patch.dict(os.environ, {"JITSMAIL_CACHE": cache_setting}), contextlib.redirect_stdout(output):
             status = helper["main"](list(args))
         lines = output.getvalue().splitlines()
         self.assertEqual(len(lines), 1)
@@ -71,6 +74,32 @@ class HelperTest(unittest.TestCase):
                         self.assertLess(argv.index("--mailbox=" + mailbox), argv.index("--"))
                     self.assertNotIn("--seen", argv)
 
+    def test_reads_use_cache_force_refresh_and_clear(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        config = Path(directory.name) / "config.toml"
+        config.write_text('[accounts.work]\ndefault = true\n')
+        raw = b"Subject: Cached\n\nbody"
+        self.cache_enabled = True
+        self.addCleanup(lambda: setattr(self, "cache_enabled", False))
+        with patch.dict(os.environ, {"XDG_CACHE_HOME": directory.name}), patch(
+                "subprocess.run", return_value=subprocess.CompletedProcess([], 0, raw, b"")) as run:
+            args = ("read", "--account", "work", "--config", str(config), "--id", "42",
+                    "--cache-identity", "a" * 64)
+            self.assertEqual(self.invoke(*args)[0], 0)
+            self.assertEqual(self.invoke(*args)[0], 0)
+            default_args = ("read", "--config", str(config), "--id", "42",
+                            "--cache-identity", "a" * 64)
+            self.assertEqual(self.invoke(*default_args)[0], 0)
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(self.invoke(*args, "--force")[0], 0)
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(self.invoke("cache-clear", "--demo"),
+                             (1, {"error": "cache-clear is not available in demo mode"}))
+            self.assertEqual(self.invoke("cache-clear"), (0, {"cleared": True}))
+            self.assertEqual(self.invoke(*args)[0], 0)
+            self.assertEqual(run.call_count, 3)
+
     def test_demo_folder_discovery_and_navigation_are_offline(self):
         with patch("subprocess.run", side_effect=AssertionError("must remain offline")):
             status, result = self.invoke("folders", "--demo")
@@ -97,11 +126,15 @@ class HelperTest(unittest.TestCase):
             status, result = self.invoke("list")
         self.assertEqual(status, 0)
         self.assertEqual(result["account"], "Default")
-        self.assertEqual(result["messages"][0], {
+        first = dict(result["messages"][0])
+        self.assertRegex(first.pop("cacheIdentity"), r"^[0-9a-f]{64}$")
+        self.assertEqual(first, {
             "id": "42", "subject": "Hello", "from": "Alex <alex@example.test>, sam@example.test",
             "date": "2026-01-15T10:30:00Z", "unread": False,
         })
-        self.assertEqual(result["messages"][1], {
+        second = dict(result["messages"][1])
+        self.assertRegex(second.pop("cacheIdentity"), r"^[0-9a-f]{64}$")
+        self.assertEqual(second, {
             "id": "43", "subject": "", "from": "", "date": "", "unread": True,
         })
         self.assertEqual([m["unread"] for m in result["messages"]], [False, True, False, True])

@@ -101,7 +101,12 @@ BarWidget {
         if (!mail.deleteMessage(snapshot.id)) moveNextId = ""
     }
     onTargetIdChanged: cancelDelete(false)
-    onPaneChanged: cancelDelete(false)
+    function updatePrefetchSelection() {
+        if (typeof mail.setPrefetchSelection === "function")
+            mail.setPrefetchSelection(opened && pane === "list" ? cursorId : "")
+    }
+    onCursorIdChanged: updatePrefetchSelection()
+    onPaneChanged: { cancelDelete(false); updatePrefetchSelection() }
     readonly property bool switchingBlocked: confirmingDelete || mail.deleting || mail.moving || mail.marking || mail.savingAttachment || mail.openingAttachment
     function toggleFolders() {
         if (switchingBlocked) return
@@ -376,6 +381,7 @@ BarWidget {
         cancelDelete(false)
         if (opened) { showHelp = false; Qt.callLater(focusList) }
         else { showFolders = false; showHelp = false; mail.cancelAttachmentOpen() }
+        updatePrefetchSelection()
     }
 
     MailService {
@@ -392,7 +398,7 @@ BarWidget {
             if (root.showFolders && root.movePicker) root.dismissFolders()
             root.moveNextId = ""
         }
-        function onMessagesChanged() { root.cancelDelete(false); root.syncCursor() }
+        function onMessagesChanged() { root.cancelDelete(false); root.syncCursor(); Qt.callLater(root.updatePrefetchSelection) }
         function onLoadingChanged() { if (mail.loading) root.cancelDelete(false) }
         function onReadingChanged() { if (mail.reading) root.cancelDelete(false) }
         function onPageChanged() { root.cancelDelete(false) }

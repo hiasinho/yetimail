@@ -11,7 +11,8 @@ A keyboard-first Omarchy mail panel powered by **Himalaya 2.1**. Read and manage
 - Automatic refresh every 120 seconds, plus Refresh / Ctrl+R.
 - Safe text-only message display with compact numbered web links and destination previews.
 - Keyboard-accessible attachment details, safe saving, and explicit opening of supported types.
-- Explicit mark-read / mark-unread actions. Opening a message does **not** mark it seen.
+- Explicit mark-read / mark-unread actions. Opening or prefetching a message does **not** mark it seen.
+- Private, bounded SQLite body cache with debounced prefetching for faster opens.
 - Immediate archive/trash moves; permanent removal requires confirmation. No sending or remote images.
 - Demo mode requires no account and never invokes Himalaya.
 
@@ -33,7 +34,7 @@ himalaya --account personal --json envelope list --page-size 5
 
 Use the default account or select an account through plugin settings. Jitsmail starts at the account's default inbox alias; the folder picker discovers that account's selectable mailboxes. Keep passwords in your password manager/keyring, not plugin settings or this repository. Authentication must work without an interactive prompt; the helper has closed stdin and a 30-second timeout.
 
-Gmail/OAuth, compose/reply, bulk operations, search, and offline sync are outside this milestone.
+Gmail/OAuth, compose/reply, bulk operations, search, and full offline sync are outside this milestone.
 
 ## Install the local checkout
 
@@ -188,6 +189,10 @@ Widget.qml → MailService.qml → bin/jitsmail-helper → Himalaya → IMAP
 
 The adapter executes argument arrays, never shell command strings. Account credentials stay under Himalaya's control. The helper suppresses backend stderr in UI errors because it may contain private configuration details. For connection errors, troubleshoot with Himalaya directly in a private terminal.
 
-No mail is written to a Jitsmail cache; only explicit attachment save/open actions write downloaded files. Fetched messages remain in memory while the widget is loaded; there is no offline sync. Email text is explicitly displayed as plain text, never executable HTML. Large messages still need to be fetched by Himalaya; this prototype does not yet enforce a download-size cap.
+Processed messages are cached in `$XDG_CACHE_HOME/jitsmail/messages.sqlite3` (normally `~/.cache/jitsmail/messages.sqlite3`). The cache contains displayed headers, plain-text bodies, links, and attachment metadata, but not raw MIME or attachment payloads. It expires entries after 30 days, evicts least-recently-used entries above 100 MiB, and skips individual processed messages above 5 MiB. The directory is owner-only and database/sidecar permissions are tightened to 0600; this is not encryption, so system disk encryption is still recommended.
+
+While the panel's message list is open, resting on a row for 300 ms queues that message and the next two for one-at-a-time background prefetch. Cached opens avoid Himalaya and network access, although they still start the small Python helper. Effective config/account, mailbox, parser version, and a token from the current envelope listing isolate entries. Because Himalaya's cross-backend listing does not expose a durable mailbox generation, a refreshed listing intentionally gets new tokens rather than risking a reused message ID returning an unrelated body. Moves and deletes conservatively invalidate the account's cache. Opening and prefetching omit Himalaya's `--seen` flag.
+
+Clear all cached messages with `bin/jitsmail-helper cache-clear`. Set `JITSMAIL_CACHE=0` in the shell environment to disable both cache reads and writes (background prefetch still runs but provides no speed benefit, so disabling the cache is mainly intended for troubleshooting). Cache failures fall back to ordinary Himalaya reads. This is a performance cache, not full offline sync: listing mail and uncached messages still requires the configured backend. Email text is explicitly displayed as plain text, never executable HTML. Large messages still need to be fetched by Himalaya; this implementation does not yet enforce a raw-download size cap.
 
 Offline tests cover fixtures, JSON normalization, MIME parsing, safe command arguments, errors, and the QML integration. A live-server smoke test is still required with your configured account before treating this as a daily mail client.

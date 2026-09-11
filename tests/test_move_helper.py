@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import runpy
 import subprocess
@@ -18,6 +19,9 @@ class MoveHelperTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
+        environment = patch.dict(os.environ, {"JITSMAIL_CACHE": "0"})
+        environment.start()
+        self.addCleanup(environment.stop)
         self.config = Path(directory.name) / "config.toml"
         self.configure()
 

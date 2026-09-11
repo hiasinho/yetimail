@@ -2,10 +2,13 @@
 """One-shot Himalaya 2.1 adapter. Only stdout is the JSON protocol."""
 
 import argparse
+import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import uuid
 from email import policy
 from email.parser import BytesParser
 from html.parser import HTMLParser
@@ -14,11 +17,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from attachments import AttachmentError, metadata as attachment_metadata, save as save_attachment
-from mailbox_config import MailboxConfigError, check_literal_mailbox
+from mailbox_config import MailboxConfigError, check_literal_mailbox, config_paths, merge, tomllib
+from message_cache import CacheKey, MessageCache
 
 
 TIMEOUT = 30
 PAGE_SIZE = 50
+MESSAGE_PARSER_VERSION = "1"
 
 
 class HelperError(Exception):
@@ -228,6 +233,83 @@ def mailbox_args(args):
     return ["--mailbox=" + args.mailbox] if args.mailbox else []
 
 
+def cache_context(args):
+    """Hash effective config/account inputs without retaining credentials."""
+    try:
+        if tomllib is None:
+            return None
+        digest = hashlib.sha256()
+        config = {}
+        for path in config_paths(args.config):
+            digest.update(b"\0path\0" + os.fsencode(path))
+            with path.open("rb") as source:
+                raw = source.read()
+            digest.update(raw)
+            config = merge(config, tomllib.loads(raw.decode("utf-8")))
+        accounts = config["accounts"]
+        requested = args.account
+        if requested in (None, "", "default"):
+            names = [name for name, value in accounts.items()
+                     if isinstance(value, dict) and value.get("default") is True]
+            if len(names) != 1:
+                return None
+            requested = names[0]
+        if requested not in accounts:
+            return None
+        digest.update(b"\0account\0" + requested.encode("utf-8"))
+        return digest.hexdigest()
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError, RecursionError):
+        return None
+
+
+def message_cache(args, require_identity=True):
+    # Persistent hits require identity from a current envelope listing. Direct
+    # helper reads without it deliberately fetch from Himalaya every time.
+    if ((require_identity and not getattr(args, "cache_identity", None))
+            or os.environ.get("JITSMAIL_CACHE", "1").lower() in {"0", "false", "no", "off"}):
+        return None, None
+    context = cache_context(args)
+    return (MessageCache(), context) if context else (None, None)
+
+
+def cache_key(context, args, mailbox=None):
+    identity = args.id + "\0" + args.cache_identity
+    return CacheKey(context, args.mailbox if mailbox is None else mailbox,
+                    identity, MESSAGE_PARSER_VERSION)
+
+
+def read_message(args):
+    cache, context = message_cache(args)
+    lookup = cache.get(cache_key(context, args)) if cache else None
+    if lookup and lookup.hit and not args.force and cache_context(args) == context:
+        return lookup.value
+    # A force refresh still captures the current epoch so it cannot race a
+    # delete/move/cache clear. Cache failures never prevent reading mail.
+    if cache and (lookup is None or args.force):
+        lookup = cache.get(cache_key(context, args))
+    raw = run_himalaya(args, ["message", "read", "--raw", *mailbox_args(args), "--", args.id])
+    try:
+        result = parse_message(raw, args.id)
+    except (ValueError, RecursionError):
+        raise HelperError("Could not parse message from Himalaya") from None
+    # Himalaya loads config independently. Do not cache a fetch if the config
+    # changed between our identity snapshot and subprocess completion.
+    if cache and lookup and cache_context(args) == context:
+        cache.put(cache_key(context, args), result, generation=lookup.generation)
+    return result
+
+
+def invalidate_message(args, *mailboxes):
+    cache, context = message_cache(args, require_identity=False)
+    if cache:
+        # Aliases (notably configured/default Inbox) can name the same backend
+        # mailbox differently, so invalidate the whole account/config context.
+        # If SQLite is locked, leave a marker that makes all future hits fail
+        # closed until an explicit cache clear succeeds.
+        if not cache.invalidate(context):
+            cache.disable()
+
+
 def list_folders(args):
     raw = run_himalaya(args, ["--json", "mailbox", "list"])
     try:
@@ -261,6 +343,10 @@ def list_messages(args):
         if not isinstance(envelopes, list):
             raise ValueError()
         messages = []
+        # Cross-backend Himalaya output has no durable mailbox generation such
+        # as IMAP UIDVALIDITY. Scope cache identities to this authoritative
+        # listing so reused IDs can never hit an older persistent entry.
+        listing_nonce = uuid.uuid4().hex
         for envelope in envelopes:
             if not isinstance(envelope["id"], str):
                 raise ValueError()
@@ -273,10 +359,14 @@ def list_messages(args):
             seen = any(flag.get("iana") == "seen" or
                        flag.get("raw", "").lower().lstrip("\\$") == "seen"
                        for flag in envelope.get("flags", []))
+            identity_source = {key: value for key, value in envelope.items() if key != "flags"}
+            identity = hashlib.sha256(listing_nonce.encode("ascii") + json.dumps(
+                identity_source, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")).hexdigest()
             messages.append({
                 "id": envelope["id"], "subject": envelope.get("subject") or "",
                 "from": ", ".join(senders), "date": envelope.get("date") or "",
-                "unread": not seen,
+                "unread": not seen, "cacheIdentity": identity,
             })
     except (ValueError, TypeError, KeyError, AttributeError):
         raise HelperError("Invalid envelope response from Himalaya") from None
@@ -346,6 +436,7 @@ def mark_message(args):
 def delete_message(args):
     # Himalaya owns Trash resolution and trash-first policy. Never expunge.
     run_himalaya(args, ["message", "delete", *mailbox_args(args), "--", args.id])
+    invalidate_message(args, args.mailbox)
     return {"id": args.id}
 
 
@@ -353,6 +444,7 @@ def move_message(args):
     source = ["--from=" + args.mailbox] if args.mailbox else []
     run_himalaya(args, ["message", "move", *source, "--to=" + args.destination,
                        "--", args.id])
+    invalidate_message(args, args.mailbox, args.destination)
     return {"id": args.id, "destination": args.destination}
 
 
@@ -395,7 +487,7 @@ def demo(args):
 
 def main(argv=None):
     parser = Parser(description=__doc__)
-    parser.add_argument("command", choices=("folders", "list", "read", "mark", "save", "move", "delete"))
+    parser.add_argument("command", choices=("folders", "list", "read", "mark", "save", "move", "delete", "cache-clear"))
     parser.add_argument("--account", help="Himalaya account name; omit for its default")
     parser.add_argument("--config", help="Himalaya configuration path")
     parser.add_argument("--mailbox", default="", help="backend mailbox ID; omit for the inbox alias")
@@ -403,12 +495,26 @@ def main(argv=None):
     parser.add_argument("--destination", help="exact backend destination mailbox ID (move only)")
     parser.add_argument("--page", type=int, help="list page, starting at 1")
     parser.add_argument("--attachment", help="content-bound attachment ID (save only)")
+    parser.add_argument("--cache-identity", help="SHA-256 identity from the current envelope list (read only)")
+    parser.add_argument("--force", action="store_true", help="bypass and replace cache (read only)")
     flags = parser.add_mutually_exclusive_group()
     flags.add_argument("--seen", dest="seen", action="store_true", default=None)
     flags.add_argument("--unseen", dest="seen", action="store_false")
     parser.add_argument("--demo", action="store_true", help="use fixtures; never invoke Himalaya")
     try:
         args = parser.parse_args(argv)
+        if args.force and args.command != "read":
+            raise HelperError("--force is only supported for read")
+        if args.cache_identity is not None and (args.command != "read" or not re.fullmatch(r"[0-9a-f]{64}", args.cache_identity)):
+            raise HelperError("--cache-identity requires read and 64 lowercase hexadecimal characters")
+        if args.command == "cache-clear":
+            if args.demo:
+                raise HelperError("cache-clear is not available in demo mode")
+            if any(value is not None for value in (args.id, args.destination, args.attachment, args.cache_identity, args.page, args.seen)):
+                raise HelperError("cache-clear does not accept message options")
+            result = {"cleared": MessageCache().clear()}
+            print(json.dumps(result))
+            return 0 if result["cleared"] else 1
         if args.command == "delete":
             if not args.account or not args.account.strip():
                 raise HelperError("delete requires an explicit --account")
@@ -461,11 +567,7 @@ def main(argv=None):
         elif args.command == "delete":
             result = delete_message(args)
         else:
-            raw = run_himalaya(args, ["message", "read", "--raw", *mailbox_args(args), "--", args.id])
-            try:
-                result = parse_message(raw, args.id)
-            except (ValueError, RecursionError):
-                raise HelperError("Could not parse message from Himalaya") from None
+            result = read_message(args)
     except (ValueError, RecursionError):
         print(json.dumps({"error": "Could not parse message attachment"}))
         return 1

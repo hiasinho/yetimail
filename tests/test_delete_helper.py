@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import runpy
 import subprocess
@@ -16,6 +17,9 @@ class DeleteHelperTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
+        environment = patch.dict(os.environ, {'JITSMAIL_CACHE': '0'})
+        environment.start()
+        self.addCleanup(environment.stop)
         self.config = Path(directory.name) / 'config.toml'
         self.config.write_text('[accounts.work]\ndefault = true\n[accounts.work.imap]\n'
                                '[accounts.work.mailbox.alias]\ntrash = "Deleted Items"\n')

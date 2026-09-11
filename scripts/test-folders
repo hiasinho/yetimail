@@ -69,6 +69,12 @@ ShellRoot {
                 test.phase++
             } else if (test.phase === 1 && mail.folderId === "opaque" && !mail.loading && !mail.reading && mail.messages.length) {
                 if (!test.check(mail.folderName === "Sent Items" && mail.message === null && mail.selectedId === "" && mail.page === 1, "folder reset")) return
+                var discovered = mail.folders
+                mail.folders = [{id: "[Gmail]/Trash", name: "[Gmail]/Trash"},
+                                {id: "[Gmail]/All Mail", name: "[Gmail]/All Mail"}]
+                if (!test.check(mail.resolveFolderRole("trash").id === "[Gmail]/Trash", "nested Gmail trash role")) return
+                if (!test.check(mail.resolveFolderRole("archive").id === "[Gmail]/All Mail", "Gmail all-mail archive role")) return
+                mail.folders = discovered
                 if (!test.check(!mail.selectFolderRole("archive") && !!mail.foldersError && mail.folderId === "opaque", "ambiguous role")) return
                 if (!test.check(!mail.selectFolder("unknown"), "unknown folder")) return
                 mail.readMessage("same")

@@ -93,8 +93,14 @@ Item {
         var matches = folders.filter(function(f) { return f.role === role })
         if (!matches.length) {
             var names = {inbox: ["inbox"], sent: ["sent", "sent mail", "sent items", "sent messages"],
-                         archive: ["archive", "archives"], trash: ["trash", "deleted items", "deleted messages"]}
-            matches = folders.filter(function(f) { return !f.role && names[role].indexOf(f.name.toLowerCase()) >= 0 })
+                         archive: ["archive", "archives", "all mail"], trash: ["trash", "deleted items", "deleted messages"]}
+            matches = folders.filter(function(f) {
+                if (f.role) return false
+                var name = f.name.toLowerCase()
+                var separator = name.lastIndexOf("/")
+                if (separator >= 0) name = name.slice(separator + 1)
+                return names[role].indexOf(name) >= 0
+            })
         }
         if (matches.length === 1) return matches[0]
         if (!matches.length && role === "inbox") return null

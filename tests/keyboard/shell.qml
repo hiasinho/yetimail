@@ -81,10 +81,40 @@ ShellRoot {
                 equal(mail.calls.filter(function(call) { return call.operation === "read" }).length, 1,
                     "presentation mode changes never reread mail")
             }
+            function test_inbox_chrome() {
+                var title = find(widget, function(item) { return item.objectName === "currentFolderTitle" })
+                var footer = find(widget, function(item) { return item.objectName === "inboxFooterStatus" })
+                var panel = find(widget, function(item) { return item.objectName === "mailPanel" })
+                var newer = find(widget, function(item) { return item.objectName === "newerPageButton" })
+                var help = find(widget, function(item) { return item.objectName === "shortcutHelpButton" })
+                var inbox = find(widget, function(item) { return item.objectName === "inboxPane" })
+                var refresh = find(widget, function(item) { return item.objectName === "inboxRefreshButton" })
+                check(title !== null && footer !== null && panel !== null && inbox !== null && refresh !== null, "inbox chrome found")
+                equal(title.text, "INBOX / DEMO", "heading names current folder")
+                equal(footer.text, "50 messages · Page 1", "footer combines count and page")
+                check(!newer.enabled, "Newer is disabled on page one")
+                equal(help.text, "?", "shortcut help stays compact")
+                var fullPageHeight = panel.contentHeight
+                mail.messages = mail.messages.slice(0, 3)
+                wait(30)
+                equal(footer.text, "3 messages · Page 1", "short-page count updates")
+                check(panel.contentHeight < fullPageHeight, "short mailbox page reduces panel height")
+                mail.folderName = "Projects / 2026"
+                wait(30)
+                equal(title.text, "PROJECTS / 2026 / DEMO", "heading follows folder navigation")
+                mail.folderName = "A very long folder name that must not displace refresh"
+                wait(30)
+                var refreshPosition = refresh.mapToItem(inbox, 0, 0)
+                check(title.width <= title.parent.width, "long folder heading stays within its column")
+                check(refreshPosition.x + refresh.width <= inbox.width + 0.5, "long folder heading keeps Refresh inside sidebar")
+            }
             function test_delete_confirmation() {
                 mail.folderId = "Trash"; widget.syncCursor()
+                mail.messages = mail.messages.slice(0, 3)
                 press(Qt.Key_J); press(Qt.Key_Delete)
                 check(widget.confirmingDelete, "Delete in Trash asks")
+                var panel = find(widget, function(item) { return item.objectName === "mailPanel" })
+                equal(panel.contentHeight, 640, "confirmation expands a compact inbox")
                 equal(widget.deleteSnapshot.id, "alpha/2")
                 equal(widget.deleteSnapshot.account, "alpha")
                 equal(widget.deleteSnapshot.folder, "Trash")
@@ -663,7 +693,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 19)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 20)
                     console.log("JITSMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

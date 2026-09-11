@@ -371,12 +371,17 @@ BarWidget {
     }
     KeyboardPanel {
         id: panel
+        objectName: "mailPanel"
         anchorItem: button
         bar: root.bar
         owner: root
         open: root.opened
         contentWidth: Math.max(1, Math.min(940, availableCardWidth - padding * 2))
-        contentHeight: Math.max(1, Math.min(640, availableCardHeight - padding * 2))
+        contentHeight: {
+            var desired = mail.message || mail.reading || mail.readError || root.confirmingDelete || root.showFolders || root.showHelp ? 640 : Math.max(300, sidebar.preferredContentHeight)
+            var inset = "verticalContentInset" in panel ? panel.verticalContentInset : panel.padding * 2
+            return Math.max(1, Math.round(Math.min(desired + inset, 640, panel.availableCardHeight)))
+        }
         focusTarget: sidebar.focusTarget
 
         FocusScope {

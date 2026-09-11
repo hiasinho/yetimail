@@ -6,6 +6,7 @@ import qs.Commons
 
 ColumnLayout {
     id: view
+    objectName: "inboxPane"
     required property bool demo
     required property int unread
     required property bool loading
@@ -35,6 +36,8 @@ ColumnLayout {
     signal nextRequested()
     signal helpRequested()
     readonly property point folderAnchor: Qt.point(accountFlow.x + folderButton.x, accountFlow.y + folderButton.y + folderButton.height + 2)
+    readonly property real desiredListHeight: Math.max(90, Math.min(7, messages.length) * 68)
+    readonly property real preferredContentHeight: headerRow.implicitHeight + accountFlow.implicitHeight + desiredListHeight + footerRow.implicitHeight + spacing * 3
     readonly property real listHeight: inbox.height
     readonly property Item focusTarget: inbox
     function focusList() { inbox.forceActiveFocus() }
@@ -54,18 +57,23 @@ ColumnLayout {
         if (isNaN(date.getTime())) return String(value || "")
         return Qt.formatDateTime(date, date.toDateString() === new Date().toDateString() ? "HH:mm" : "MMM d")
     }
+    function footerStatus() {
+        var status = view.deleting ? "Deleting…" : view.moving ? "Moving…" : view.marking ? "Updating…" : view.loading ? "Refreshing…" : view.listError ? "Refresh failed · stale" : view.messages.length + (view.messages.length === 1 ? " message" : " messages")
+        return status + " · Page " + view.page
+    }
 
     Layout.fillHeight: true
     spacing: 10
     RowLayout {
+        id: headerRow
         Layout.fillWidth: true
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 3
-            MailLabel { text: view.demo ? "MAIL / DEMO" : "MAIL"; font.pixelSize: 10; font.letterSpacing: 1.5; opacity: 0.55 }
+            MailLabel { objectName: "currentFolderTitle"; Layout.fillWidth: true; Layout.minimumWidth: 0; text: (view.folderName || "Mail").toUpperCase() + (view.demo ? " / DEMO" : ""); font.pixelSize: 10; font.letterSpacing: 1.5; opacity: 0.55; elide: Text.ElideRight }
             MailLabel { Layout.fillWidth: true; text: view.unread + " unread"; font.pixelSize: 14 }
         }
-        MailButton { text: view.loading ? "…" : "Refresh"; iconText: view.loading ? "" : view.icons.refresh; tooltipText: "Refresh (r)"; enabled: !view.busy; onClicked: view.refreshRequested() }
+        MailButton { objectName: "inboxRefreshButton"; text: view.loading ? "…" : "Refresh"; iconText: view.loading ? "" : view.icons.refresh; tooltipText: "Refresh (r)"; enabled: !view.busy; onClicked: view.refreshRequested() }
     }
     Flow {
         id: accountFlow
@@ -101,6 +109,7 @@ ColumnLayout {
         onActiveFocusChanged: if (activeFocus) view.listFocused()
         Layout.fillWidth: true
         Layout.fillHeight: true
+        Layout.preferredHeight: view.desiredListHeight
         clip: true
         spacing: 2
         model: view.messages
@@ -154,14 +163,12 @@ ColumnLayout {
         }
     }
     RowLayout {
+        id: footerRow
         Layout.fillWidth: true
-        MailButton { text: "Newer"; iconText: view.icons.previous; tooltipText: "Previous page (p)"; enabled: view.page > 1 && !view.busy; onClicked: view.previousRequested() }
-        MailLabel { Layout.fillWidth: true; text: "Page " + view.page; horizontalAlignment: Text.AlignHCenter; opacity: 0.55; font.pixelSize: 10 }
-        MailButton { text: "Older"; iconText: view.icons.next; tooltipText: "Next page (n)"; enabled: view.hasNext && !view.busy; onClicked: view.nextRequested() }
-    }
-    RowLayout {
-        Layout.fillWidth: true
-        MailLabel { Layout.fillWidth: true; text: view.deleting ? "Deleting…" : view.moving ? "Moving…" : view.marking ? "Updating…" : view.loading ? "Refreshing…" : view.listError ? "Refresh failed · stale" : view.messages.length + " messages on page"; opacity: 0.55; font.pixelSize: 10; elide: Text.ElideRight }
-        MailButton { text: "Shortcuts ?"; selected: view.showHelp; onClicked: view.helpRequested() }
+        spacing: 4
+        MailButton { objectName: "newerPageButton"; text: "Newer"; iconText: view.icons.previous; tooltipText: "Previous page (p)"; enabled: view.page > 1 && !view.busy; onClicked: view.previousRequested() }
+        MailLabel { objectName: "inboxFooterStatus"; Layout.fillWidth: true; Layout.minimumWidth: 0; text: view.footerStatus(); horizontalAlignment: Text.AlignHCenter; opacity: 0.55; font.pixelSize: 10; elide: Text.ElideRight }
+        MailButton { objectName: "olderPageButton"; text: "Older"; iconText: view.icons.next; tooltipText: "Next page (n)"; enabled: view.hasNext && !view.busy; onClicked: view.nextRequested() }
+        MailButton { objectName: "shortcutHelpButton"; text: "?"; tooltipText: "Keyboard shortcuts (?)"; selected: view.showHelp; onClicked: view.helpRequested() }
     }
 }

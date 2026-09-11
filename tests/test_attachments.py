@@ -13,7 +13,7 @@ from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
 
-helper = runpy.run_path(str(Path(__file__).resolve().parents[1] / "bin/jitsmail-helper"))
+helper = runpy.run_path(str(Path(__file__).resolve().parents[1] / "bin/yetimail-helper"))
 import attachments
 
 
@@ -174,5 +174,5 @@ class AttachmentTest(unittest.TestCase):
             code, message = self.invoke("read", "--demo", "--id", "demo-1")
             code, result = self.invoke("save", "--demo", "--id", "demo-1", "--attachment", message["attachments"][0]["id"])
             self.assertEqual(code, 0, result)
-            self.assertEqual(Path(result["path"]).read_text(), "Welcome to Jitsmail! This is an offline demo attachment.\n")
+            self.assertEqual(Path(result["path"]).read_text(), "Welcome to Yetimail! This is an offline demo attachment.\n")
             run.assert_not_called()

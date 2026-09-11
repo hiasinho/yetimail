@@ -264,8 +264,10 @@ def cache_context(args):
 def message_cache(args, require_identity=True):
     # Persistent hits require identity from a current envelope listing. Direct
     # helper reads without it deliberately fetch from Himalaya every time.
+    cache_setting = os.environ.get(
+        "YETIMAIL_CACHE", os.environ.get("JITSMAIL_CACHE", "1"))
     if ((require_identity and not getattr(args, "cache_identity", None))
-            or os.environ.get("JITSMAIL_CACHE", "1").lower() in {"0", "false", "no", "off"}):
+            or cache_setting.lower() in {"0", "false", "no", "off"}):
         return None, None
     context = cache_context(args)
     return (MessageCache(), context) if context else (None, None)
@@ -351,6 +353,8 @@ def envelope_fingerprint(envelope):
             and sender["email"].strip() for sender in senders):
         return ""
     source = {key: value for key, value in envelope.items() if key != "flags"}
+    # Preserve the pre-rename fingerprint namespace so cache identity semantics
+    # do not change merely because the application was rebranded.
     return hashlib.sha256(b"jitsmail-envelope-v1\0" + json.dumps(
         source, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")).hexdigest()
@@ -417,17 +421,17 @@ def parse_message(raw, message_id):
 
 
 DEMO_ATTACHMENT = (b'Content-Type: text/plain\nContent-Disposition: attachment; filename="welcome.txt"\n\n'
-                   b'Welcome to Jitsmail! This is an offline demo attachment.\n')
+                   b'Welcome to Yetimail! This is an offline demo attachment.\n')
 
 DEMO_MESSAGES = [
-    {"id": "demo-1", "subject": "Welcome to Jitsmail", "from": "Alex <alex@example.test>",
+    {"id": "demo-1", "subject": "Welcome to Yetimail", "from": "Alex <alex@example.test>",
      "to": "You <you@example.test>", "date": "2026-01-15T10:30:00+00:00", "unread": True,
      "attachments": attachment_metadata(BytesParser(policy=policy.default).parsebytes(DEMO_ATTACHMENT)),
-     "body": "Welcome!\n\nThis is demo mail. No account or network was accessed.\n\nTry the link list with o: https://example.com/welcome?source=jitsmail-demo\n\nAlex"},
+     "body": "Welcome!\n\nThis is demo mail. No account or network was accessed.\n\nTry the link list with o: https://example.com/welcome?source=yetimail-demo\n\nAlex"},
     {"id": "demo-2", "subject": "Lunch tomorrow?", "from": "Sam <sam@example.test>",
      "to": "You <you@example.test>", "date": "2026-01-14T14:00:00+00:00", "unread": False,
      "body": "Hi,\n\nWould noon work for lunch tomorrow?\n\nSam"},
-    {"id": "demo-3", "subject": "A quiet inbox", "from": "Jitsmail <hello@example.test>",
+    {"id": "demo-3", "subject": "A quiet inbox", "from": "Yetimail <hello@example.test>",
      "to": "You <you@example.test>", "date": "2026-01-13T09:00:00+00:00", "unread": True,
      "body": "Plain text, no remote images, and no tracking requests.\n\nEnjoy your day."},
 ]
@@ -435,7 +439,7 @@ DEMO_MESSAGES = [
 
 DEMO_MESSAGES.extend({
     "id": f"demo-{number}", "subject": f"Demo message {number}",
-    "from": "Jitsmail <hello@example.test>", "to": "You <you@example.test>",
+    "from": "Yetimail <hello@example.test>", "to": "You <you@example.test>",
     "date": "2026-01-12T09:00:00+00:00", "unread": number % 3 != 0,
     "body": f"This is demo message {number}. No network was accessed.",
 } for number in range(4, 64))

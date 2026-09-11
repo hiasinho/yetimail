@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
-  "id": "hiasinho.jitsmail",
-  "name": "Jitsmail",
+  "id": "hiasinho.yetimail",
+  "name": "Yetimail",
   "version": "0.9.0",
   "author": "hiasinho",
   "description": "A keyboard-first Himalaya mail reader with folder navigation and message moves for Omarchy.",
   "kinds": ["bar-widget"],
   "entryPoints": { "barWidget": "Widget.qml" },
   "barWidget": {
-    "displayName": "Jitsmail",
+    "displayName": "Yetimail",
     "category": "Communication",
     "allowMultiple": false,
     "defaultSection": "right",

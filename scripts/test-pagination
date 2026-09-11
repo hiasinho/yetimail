@@ -4,29 +4,29 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 quickshell=$(command -v quickshell)
-export JITSMAIL_TEST_PYTHON=$(command -v python3)
+export YETIMAIL_TEST_PYTHON=$(command -v python3)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 ln -s "$root/MailService.qml" "$work/MailService.qml"
 # resolvedUrl may use either the symlink location or the source location.
 mkdir "$work/bin"
-ln -s "$root/bin/jitsmail-helper" "$work/bin/jitsmail-helper"
+ln -s "$root/bin/yetimail-helper" "$work/bin/yetimail-helper"
 cat > "$work/bin/himalaya" <<'SH'
 #!/bin/sh
-printf 'FORBIDDEN Himalaya invocation\n' >> "$JITSMAIL_CALLS"
+printf 'FORBIDDEN Himalaya invocation\n' >> "$YETIMAIL_CALLS"
 exit 99
 SH
 cat > "$work/bin/python3" <<'SH'
 #!/bin/sh
 helper=$1; shift
-if [ "$JITSMAIL_SCENARIO" = demo ]; then
+if [ "$YETIMAIL_SCENARIO" = demo ]; then
     # Refuse delegation unless the production helper is explicitly offline.
     for arg do
         if [ "$arg" = --demo ]; then
-            exec "$JITSMAIL_TEST_PYTHON" "$helper" "$@"
+            exec "$YETIMAIL_TEST_PYTHON" "$helper" "$@"
         fi
     done
-    printf 'FORBIDDEN non-demo Python invocation\n' >> "$JITSMAIL_CALLS"
+    printf 'FORBIDDEN non-demo Python invocation\n' >> "$YETIMAIL_CALLS"
     exit 99
 fi
 operation=$1; shift
@@ -40,7 +40,7 @@ while [ "$#" -gt 0 ]; do
         --page) page=$2; shift 2 ;;
         --seen) seen=true; shift ;;
         --unseen) seen=false; shift ;;
-        *) printf 'BAD ARGUMENT\n' >> "$JITSMAIL_CALLS"; exit 98 ;;
+        *) printf 'BAD ARGUMENT\n' >> "$YETIMAIL_CALLS"; exit 98 ;;
     esac
 done
 # Folder discovery is orthogonal to the pagination assertions below.
@@ -48,7 +48,7 @@ if [ "$operation" = folders ]; then
     printf '{"folders":[{"id":"INBOX","name":"Inbox","role":"inbox"}]}\n'
     exit 0
 fi
-printf '%s account=%s id=%s page=%s seen=%s\n' "$operation" "$account" "$id" "$page" "$seen" >> "$JITSMAIL_CALLS"
+printf '%s account=%s id=%s page=%s seen=%s\n' "$operation" "$account" "$id" "$page" "$seen" >> "$YETIMAIL_CALLS"
 /usr/bin/sleep 0.2
 case "$operation" in
     list)
@@ -59,7 +59,7 @@ case "$operation" in
     mark)
         if [ "$seen" = false ]; then printf '{"error":"fixture mark failure"}\n'; exit 1; fi
         printf '{"id":"%s","seen":%s}\n' "$id" "$seen" ;;
-    *) printf 'BAD OPERATION\n' >> "$JITSMAIL_CALLS"; exit 98 ;;
+    *) printf 'BAD OPERATION\n' >> "$YETIMAIL_CALLS"; exit 98 ;;
 esac
 SH
 chmod +x "$work/bin/python3" "$work/bin/himalaya"
@@ -68,7 +68,7 @@ import QtQuick
 import Quickshell
 ShellRoot {
     id: test
-    property bool demoMode: Quickshell.env("JITSMAIL_SCENARIO") === "demo"
+    property bool demoMode: Quickshell.env("YETIMAIL_SCENARIO") === "demo"
     property int phase: 0
     property int ticks: 0
     property bool failed: false
@@ -235,8 +235,8 @@ ShellRoot {
 QML
 status=0
 for scenario in fixture demo; do
-    export JITSMAIL_SCENARIO="$scenario" JITSMAIL_CALLS="$work/$scenario.calls"
-    : > "$JITSMAIL_CALLS"
+    export YETIMAIL_SCENARIO="$scenario" YETIMAIL_CALLS="$work/$scenario.calls"
+    : > "$YETIMAIL_CALLS"
     printf '\n=== pagination: %s ===\n' "$scenario"
     if ! QT_QPA_PLATFORM=offscreen PATH="$work/bin" \
         /usr/bin/timeout --kill-after=2 15 "$quickshell" -p "$work" --no-color > "$work/$scenario.output" 2>&1; then
@@ -244,10 +244,10 @@ for scenario in fixture demo; do
         status=1
     fi
     cat "$work/$scenario.output"
-    cat "$JITSMAIL_CALLS"
+    cat "$YETIMAIL_CALLS"
     if ! grep -q "PAGINATION_OK $scenario" "$work/$scenario.output" ||
        grep -Eq 'PAGINATION_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration' "$work/$scenario.output" ||
-       grep -Eq 'FORBIDDEN|BAD ' "$JITSMAIL_CALLS"; then status=1; fi
+       grep -Eq 'FORBIDDEN|BAD ' "$YETIMAIL_CALLS"; then status=1; fi
     if [[ $scenario == fixture ]]; then
         # Exact sequence catches duplicate launches and mutable account/id/page snapshots.
         cat > "$work/expected.calls" <<'CALLS'
@@ -265,8 +265,8 @@ list account=hiasinho id=none page=2 seen=none
 list account=final id=none page=1 seen=none
 list account=default id=none page=1 seen=none
 CALLS
-        if ! diff -u "$work/expected.calls" "$JITSMAIL_CALLS"; then status=1; fi
+        if ! diff -u "$work/expected.calls" "$YETIMAIL_CALLS"; then status=1; fi
     fi
 done
-if [[ $status == 0 ]]; then echo JITSMAIL_PAGINATION_OK; fi
+if [[ $status == 0 ]]; then echo YETIMAIL_PAGINATION_OK; fi
 exit "$status"

@@ -72,7 +72,7 @@ class MessageCache:
     """Lazy, short-lived connections; safe to use from separate processes.
 
     directory overrides the private application directory for offline tests.
-    Defaults to $XDG_CACHE_HOME/jitsmail or ~/.cache/jitsmail. Construction
+    Defaults to $XDG_CACHE_HOME/yetimail or ~/.cache/yetimail. Construction
     performs no filesystem operations. No connection is retained between calls.
     """
 
@@ -91,8 +91,8 @@ class MessageCache:
             return self.directory
         xdg = os.environ.get("XDG_CACHE_HOME", "")
         if os.path.isabs(xdg):
-            return Path(xdg) / "jitsmail"
-        return Path.home() / ".cache" / "jitsmail"
+            return Path(xdg) / "yetimail"
+        return Path.home() / ".cache" / "yetimail"
 
     @staticmethod
     def _private(path, directory=False):

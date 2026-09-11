@@ -6,7 +6,7 @@ quickshell=$(command -v quickshell)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/bin"
-ln -s "$root" "$work/Jitsmail"
+ln -s "$root" "$work/Yetimail"
 cp "$root/tests/delete-lifecycle.qml" "$work/shell.qml"
 cat > "$work/bin/python3" <<'SH'
 #!/bin/sh
@@ -22,14 +22,14 @@ while [ "$#" -gt 0 ]; do
         *) exit 98 ;;
     esac
 done
-printf '%s|%s|%s|%s|%s\n' "$operation" "$account" "$mailbox" "$id" "$page" >> "$JITSMAIL_CALLS"
+printf '%s|%s|%s|%s|%s\n' "$operation" "$account" "$mailbox" "$id" "$page" >> "$YETIMAIL_CALLS"
 /usr/bin/sleep 0.1
 case "$operation" in
     list)
         if [ "$page" = 2 ]; then
             printf '{"messages":[{"id":"same"}],"page":2,"hasNext":false}\n'
         else
-            if [ -f "$JITSMAIL_STATE/$account-$mailbox" ]; then first=fill; else first=same; fi
+            if [ -f "$YETIMAIL_STATE/$account-$mailbox" ]; then first=fill; else first=same; fi
             printf '{"messages":[{"id":"%s","subject":"%s","unread":true},{"id":"fail"},{"id":"bad"},{"id":"launch"}],"page":1,"hasNext":true}\n' "$first" "$account"
         fi ;;
     read) printf '{"id":"%s","body":"offline","attachments":[{"id":"a","openable":true}]}\n' "$id" ;;
@@ -39,17 +39,17 @@ case "$operation" in
             fail) printf '{"error":"Offline delete failed"}\n'; exit 1 ;;
             bad) printf '{"id":"wrong"}\n' ;;
             launch) /usr/bin/chmod -x "$0"; printf '{"error":"Launch failure armed"}\n'; exit 1 ;;
-            *) /usr/bin/touch "$JITSMAIL_STATE/$account-$mailbox"; printf '{"id":"%s"}\n' "$id" ;;
+            *) /usr/bin/touch "$YETIMAIL_STATE/$account-$mailbox"; printf '{"id":"%s"}\n' "$id" ;;
         esac ;;
     *) exit 98 ;;
 esac
 SH
 chmod +x "$work/bin/python3"
-export JITSMAIL_CALLS="$work/calls" JITSMAIL_STATE="$work"
+export YETIMAIL_CALLS="$work/calls" YETIMAIL_STATE="$work"
 QT_QPA_PLATFORM=offscreen PATH="$work/bin" /usr/bin/timeout --kill-after=2 12 "$quickshell" -p "$work" --no-color > "$work/output" 2>&1 || { cat "$work/output"; exit 1; }
 cat "$work/output"
 cat "$work/calls"
-grep -q JITSMAIL_DELETIONS_OK "$work/output"
+grep -q YETIMAIL_DELETIONS_OK "$work/output"
 ! grep -Eq 'DELETIONS_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration' "$work/output"
 grep -Fq 'delete|offline|Inbox|same|1' "$work/calls"
 grep -Fq 'delete|second|Exact / Folder|same|1' "$work/calls"

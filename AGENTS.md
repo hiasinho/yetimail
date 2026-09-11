@@ -1,6 +1,6 @@
 # Agent instructions
 
-Jitsmail is a Quickshell/QML mail panel for Omarchy.
+Yetimail is a Quickshell/QML mail panel for Omarchy.
 The backend uses Python 3.11+ (standard library only) and Himalaya 2.1.x.
 Read the relevant README.md sections before changing behavior.
 
@@ -20,7 +20,7 @@ and explicitly identify checks that could not run.
 
 - Widget.qml: presentation, keyboard navigation, and user interaction.
 - MailService.qml: asynchronous requests and UI-facing state.
-- bin/jitsmail-helper: Himalaya adapter, normalization, and file safety.
+- bin/yetimail-helper: Himalaya adapter, normalization, and file safety.
 - manifest.json: plugin metadata and settings.
 
 Keep these boundaries; do not invoke Himalaya directly from the widget.

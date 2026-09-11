@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export JITSMAIL_INTERACTIVE=1
+export YETIMAIL_INTERACTIVE=1
 export QT_QPA_PLATFORM=wayland
 exec "$(dirname "$0")/smoke-ui"

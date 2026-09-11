@@ -34,7 +34,7 @@ Rectangle {
         }
         MailLabel {
             Layout.fillWidth: true
-            text: "Request permanent removal from Trash. Without IMAP UIDPLUS, Himalaya may only flag the message Deleted pending expunge. Its configured Trash policy remains authoritative. Jitsmail does not expunge."
+            text: "Request permanent removal from Trash. Without IMAP UIDPLUS, Himalaya may only flag the message Deleted pending expunge. Its configured Trash policy remains authoritative. Yetimail does not expunge."
             wrapMode: Text.Wrap
         }
         MailLabel { visible: view.demo; text: "Demo only: no real mail changes; refresh restores fixtures."; Layout.fillWidth: true; wrapMode: Text.Wrap }

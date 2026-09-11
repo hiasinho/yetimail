@@ -7,20 +7,20 @@ quickshell=$(command -v quickshell)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 ln -s "$omarchy_shell/Commons" "$work/Commons"
-mkdir "$work/Ui" "$work/Jitsmail" "$work/bin"
+mkdir "$work/Ui" "$work/Yetimail" "$work/bin"
 for source in "$omarchy_shell"/Ui/*; do
     [[ ${source##*/} == KeyboardPanel.qml ]] || ln -s "$source" "$work/Ui/${source##*/}"
 done
 cp "$root/tests/keyboard/KeyboardPanel.qml" "$work/Ui/KeyboardPanel.qml"
-cp "$root/Widget.qml" "$work/Jitsmail/Widget.qml"
-cp -R "$root/ui" "$work/Jitsmail/ui"
-cp "$root/tests/keyboard/MailService.qml" "$work/Jitsmail/MailService.qml"
+cp "$root/Widget.qml" "$work/Yetimail/Widget.qml"
+cp -R "$root/ui" "$work/Yetimail/ui"
+cp "$root/tests/keyboard/MailService.qml" "$work/Yetimail/MailService.qml"
 cp "$root/tests/keyboard/shell.qml" "$work/shell.qml"
 # No production helper is present, and no executable can be found via PATH.
 status=0
 QT_QPA_PLATFORM=offscreen PATH="$work/bin" /usr/bin/timeout --kill-after=2 25 \
     "$quickshell" -p "$work" --no-color > "$work/output" 2>&1 || status=1
 cat "$work/output"
-if ! grep -q 'JITSMAIL_KEYBOARD_OK' "$work/output" ||
+if ! grep -q 'YETIMAIL_KEYBOARD_OK' "$work/output" ||
    grep -Eq 'FAIL!|KEYBOARD_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration' "$work/output"; then status=1; fi
 exit "$status"

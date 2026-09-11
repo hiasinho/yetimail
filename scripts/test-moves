@@ -6,7 +6,7 @@ quickshell=$(command -v quickshell)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/bin"
-ln -s "$root" "$work/Jitsmail"
+ln -s "$root" "$work/Yetimail"
 cat > "$work/bin/python3" <<'SH'
 #!/bin/sh
 shift
@@ -22,7 +22,7 @@ while [ "$#" -gt 0 ]; do
         *) exit 98 ;;
     esac
 done
-printf '%s|%s|%s|%s|%s|%s\n' "$operation" "$account" "$mailbox" "$id" "$destination" "$page" >> "$JITSMAIL_CALLS"
+printf '%s|%s|%s|%s|%s|%s\n' "$operation" "$account" "$mailbox" "$id" "$destination" "$page" >> "$YETIMAIL_CALLS"
 /usr/bin/sleep 0.1
 case "$operation" in
     folders) printf '%s\n' '{"folders":[{"id":"in","name":"Inbox","role":"inbox"},{"id":"Projects / Exact","name":"Archive","role":"archive"},{"id":"fail","name":"Fail"},{"id":"bad","name":"Bad"},{"id":"launch","name":"Launch"}]}' ;;
@@ -31,7 +31,7 @@ case "$operation" in
             printf '{"messages":[{"id":"same","unread":true}],"page":2,"hasNext":false}\n'
             exit 0
         fi
-        if [ "$account" = offline ] && [ -f "$JITSMAIL_STATE/$mailbox-$page" ]; then first=fill; else first=same; fi
+        if [ "$account" = offline ] && [ -f "$YETIMAIL_STATE/$mailbox-$page" ]; then first=fill; else first=same; fi
         printf '{"messages":[{"id":"%s","subject":"%s","unread":true},{"id":"other","unread":false}],"page":%s,"hasNext":true}\n' "$first" "$account" "$page" ;;
     read) printf '{"id":"%s","body":"offline","attachments":[{"id":"a","openable":true}]}\n' "$id" ;;
     move)
@@ -40,7 +40,7 @@ case "$operation" in
             fail) printf '{"error":"Offline move failed"}\n'; exit 1 ;;
             bad) printf '{"id":"wrong","destination":"bad"}\n' ;;
             launch) /usr/bin/chmod -x "$0"; printf '{"error":"Launch failure armed"}\n'; exit 1 ;;
-            *) /usr/bin/touch "$JITSMAIL_STATE/$mailbox-1"; printf '{"id":"%s","destination":"%s"}\n' "$id" "$destination" ;;
+            *) /usr/bin/touch "$YETIMAIL_STATE/$mailbox-1"; printf '{"id":"%s","destination":"%s"}\n' "$id" "$destination" ;;
         esac ;;
     *) exit 98 ;;
 esac
@@ -49,7 +49,7 @@ chmod +x "$work/bin/python3"
 cat > "$work/shell.qml" <<'QML'
 import QtQuick
 import Quickshell
-import "Jitsmail"
+import "Yetimail"
 ShellRoot {
     id: test
     property int phase: 0
@@ -173,18 +173,18 @@ ShellRoot {
                 if (!test.check(test.has("same") && mail.actionError.indexOf("Could not launch Python") >= 0, "failed launch releases latch")) return
                 mail.active = false
                 if (!test.check(!mail.moveMessage("same", "Projects / Exact"), "inactive guard")) return
-                console.log("JITSMAIL_MOVES_OK")
+                console.log("YETIMAIL_MOVES_OK")
                 Qt.quit()
             }
         }
     }
 }
 QML
-export JITSMAIL_CALLS="$work/calls" JITSMAIL_STATE="$work"
+export YETIMAIL_CALLS="$work/calls" YETIMAIL_STATE="$work"
 QT_QPA_PLATFORM=offscreen PATH="$work/bin" /usr/bin/timeout --kill-after=2 12 "$quickshell" -p "$work" --no-color > "$work/output" 2>&1 || { cat "$work/output"; exit 1; }
 cat "$work/output"
 cat "$work/calls"
-grep -q JITSMAIL_MOVES_OK "$work/output"
+grep -q YETIMAIL_MOVES_OK "$work/output"
 ! grep -Eq 'MOVES_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration' "$work/output"
 grep -Fq 'move|offline|Inbox|same|Projects / Exact|1' "$work/calls"
 grep -Fq 'move|offline|in|same|Projects / Exact|1' "$work/calls"

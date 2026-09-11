@@ -8,14 +8,14 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 ln -s "$root/MailService.qml" "$work/MailService.qml"
 mkdir "$work/bin"
-export JITSMAIL_FIXTURE="$work/fixture.py" JITSMAIL_TEST_PYTHON="$python"
+export YETIMAIL_FIXTURE="$work/fixture.py" YETIMAIL_TEST_PYTHON="$python"
 cat > "$work/bin/python3" <<'SH'
 #!/bin/sh
-exec "$JITSMAIL_TEST_PYTHON" "$JITSMAIL_FIXTURE" "$@"
+exec "$YETIMAIL_TEST_PYTHON" "$YETIMAIL_FIXTURE" "$@"
 SH
 cat > "$work/bin/himalaya" <<'SH'
 #!/bin/sh
-printf 'FORBIDDEN Himalaya invocation\n' >> "$JITSMAIL_CALLS"
+printf 'FORBIDDEN Himalaya invocation\n' >> "$YETIMAIL_CALLS"
 exit 99
 SH
 chmod +x "$work/bin/python3" "$work/bin/himalaya"
@@ -40,7 +40,7 @@ if operation not in ('list', 'read', 'folders'):
     raise RuntimeError('FORBIDDEN operation: ' + operation)
 
 def log(event):
-    with open(os.environ['JITSMAIL_CALLS'], 'a') as stream:
+    with open(os.environ['YETIMAIL_CALLS'], 'a') as stream:
         stream.write(json.dumps(dict(event=event, operation=operation,
                                     time=time.monotonic(), **options)) + '\n')
 
@@ -48,7 +48,7 @@ log('start')
 if operation == 'read':
     time.sleep(0.65)
     result = dict(id=options['id'], body='fixture ' + options.get('account', ''))
-    if os.environ['JITSMAIL_SCENARIO'] == 'failure':
+    if os.environ['YETIMAIL_SCENARIO'] == 'failure':
         result = dict(error='PRIVATE background failure')
 elif operation == 'list':
     result = dict(page=int(options['page']), hasNext=True,
@@ -64,7 +64,7 @@ import QtQuick
 import Quickshell
 ShellRoot {
     id: test
-    property string scenario: Quickshell.env("JITSMAIL_SCENARIO")
+    property string scenario: Quickshell.env("YETIMAIL_SCENARIO")
     property int phase: 0
     property double since: Date.now()
     property int ticks: 0
@@ -156,8 +156,8 @@ ShellRoot {
 QML
 status=0
 for scenario in debounce promotion different account config folder page withdrawal pending-withdrawal inactive promoted-stale failure; do
-    export JITSMAIL_SCENARIO="$scenario" JITSMAIL_CALLS="$work/$scenario.calls"
-    : > "$JITSMAIL_CALLS"
+    export YETIMAIL_SCENARIO="$scenario" YETIMAIL_CALLS="$work/$scenario.calls"
+    : > "$YETIMAIL_CALLS"
     printf '\n=== prefetch: %s ===\n' "$scenario"
     if ! QT_QPA_PLATFORM=offscreen PATH="$work/bin" \
         /usr/bin/timeout --kill-after=2 10 "$quickshell" -p "$work" --no-color > "$work/$scenario.output" 2>&1; then
@@ -167,7 +167,7 @@ for scenario in debounce promotion different account config folder page withdraw
     cat "$work/$scenario.output"
     if ! grep -q "PREFETCH_OK $scenario" "$work/$scenario.output" ||
        grep -Eq 'PREFETCH_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration|FORBIDDEN|Traceback|PRIVATE' "$work/$scenario.output"; then status=1; fi
-    if ! "$python" - "$JITSMAIL_CALLS" "$scenario" <<'PY'
+    if ! "$python" - "$YETIMAIL_CALLS" "$scenario" <<'PY'
 import json
 import sys
 
@@ -196,9 +196,9 @@ assert all(e.get('account') == 'fixture' and not e.get('config') and not e.get('
 print('PREFETCH_CALLS_OK', scenario, ''.join(e['id'] for e in starts) or '(none)')
 PY
     then
-        cat "$JITSMAIL_CALLS"
+        cat "$YETIMAIL_CALLS"
         status=1
     fi
 done
-if [[ $status == 0 ]]; then echo JITSMAIL_PREFETCH_OK; fi
+if [[ $status == 0 ]]; then echo YETIMAIL_PREFETCH_OK; fi
 exit "$status"

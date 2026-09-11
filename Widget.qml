@@ -7,7 +7,7 @@ import "ui"
 
 BarWidget {
     id: root
-    moduleName: "hiasinho.jitsmail"
+    moduleName: "hiasinho.yetimail"
     implicitWidth: button.implicitWidth
     implicitHeight: button.implicitHeight
     property bool opened: false
@@ -366,7 +366,7 @@ BarWidget {
         anchors.fill: parent
         bar: root.bar
         text: root.icons.mail + (mail.listError ? " !" : mail.unread ? " " + mail.unread : "")
-        tooltipText: "Jitsmail · " + mail.accountLabel + " · " + (mail.listError ? "Refresh failed" : mail.unread + " unread on page " + mail.page)
+        tooltipText: "Yetimail · " + mail.accountLabel + " · " + (mail.listError ? "Refresh failed" : mail.unread + " unread on page " + mail.page)
         onPressed: { root.opened = !root.opened; if (root.opened) mail.refresh() }
     }
     KeyboardPanel {

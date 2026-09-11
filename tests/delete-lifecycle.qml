@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell
-import "Jitsmail"
+import "Yetimail"
 ShellRoot {
     id: test
     property int phase: 0
@@ -93,7 +93,7 @@ ShellRoot {
                 if (!test.check(test.has("same") && mail.actionError.indexOf("Could not launch Python") >= 0, "launch failure releases latch")) return
                 mail.active = false
                 if (!test.check(!mail.deleteMessage("same"), "inactive guard")) return
-                console.log("JITSMAIL_DELETIONS_OK")
+                console.log("YETIMAIL_DELETIONS_OK")
                 Qt.quit()
             }
         }

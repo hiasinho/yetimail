@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-helper = runpy.run_path(str(Path(__file__).resolve().parents[1] / "bin/jitsmail-helper"))
+helper = runpy.run_path(str(Path(__file__).resolve().parents[1] / "bin/yetimail-helper"))
 from mailbox_config import MailboxConfigError, check_literal_mailbox
 
 
@@ -80,8 +80,8 @@ class MailboxConfigTest(unittest.TestCase):
         self.config.write_text('[mailbox.alias]\nsent = "Wrong"\n[accounts.work]\ndefault = true\n')
         extra = self.home / "extra.toml"
         extra.write_text('[mailbox.alias]\nsent = "Sent"\n')
-        os.environ["JITSMAIL_FIXTURE"] = str(extra)
-        os.environ["HIMALAYA_CONFIG"] = "~/primary.toml:${JITSMAIL_FIXTURE}"
+        os.environ["YETIMAIL_FIXTURE"] = str(extra)
+        os.environ["HIMALAYA_CONFIG"] = "~/primary.toml:${YETIMAIL_FIXTURE}"
         args = SimpleNamespace(mailbox="Sent", account=None, config=None)
         check_literal_mailbox(args)
         # Explicit config takes precedence over HIMALAYA_CONFIG.

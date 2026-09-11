@@ -9,18 +9,18 @@ trap 'rm -rf "$work"' EXIT
 mkdir "$work/bin"
 cat > "$work/bin/himalaya" <<'SH'
 #!/bin/sh
-printf 'Unexpected Himalaya invocation\n' >> "$JITSMAIL_NETWORK_GUARD"
+printf 'Unexpected Himalaya invocation\n' >> "$YETIMAIL_NETWORK_GUARD"
 exit 99
 SH
 chmod +x "$work/bin/himalaya"
-export JITSMAIL_NETWORK_GUARD="$work/himalaya-invoked"
+export YETIMAIL_NETWORK_GUARD="$work/himalaya-invoked"
 export PATH="$work/bin:$PATH"
 ln -s "$omarchy_shell/Commons" "$work/Commons"
 ln -s "$omarchy_shell/Ui" "$work/Ui"
-ln -s "$root" "$work/Jitsmail"
+ln -s "$root" "$work/Yetimail"
 window_type=FloatingWindow
 window_properties='implicitWidth: 1000; implicitHeight: 700'
-if [[ ${JITSMAIL_INTERACTIVE:-0} == 1 ]]; then
+if [[ ${YETIMAIL_INTERACTIVE:-0} == 1 ]]; then
     # A real bar-sized layer surface gives KeyboardPanel correct available
     # height; a tiled FloatingWindow was being mistaken for a giant bar.
     window_type=PanelWindow
@@ -31,7 +31,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
-import "Jitsmail"
+import "Yetimail"
 ShellRoot {
     $window_type {
         visible: true
@@ -39,7 +39,7 @@ ShellRoot {
         color: Color.background
         Text {
             anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 8 }
-            text: "Jitsmail demo"
+            text: "Yetimail demo"
             font.family: Style.font.family
             color: Color.foreground
             textFormat: Text.PlainText
@@ -50,7 +50,7 @@ ShellRoot {
     }
     // Demo-only IPC makes visual verification repeatable without pointer input.
     IpcHandler {
-        target: "jitsmailDemo"
+        target: "yetimailDemo"
         function open(): void { widget.opened = true }
         function readFirst(): void { widget.opened = true; widget.openCurrent() }
         function help(): void { widget.opened = true; widget.showHelp = !widget.showHelp }
@@ -61,23 +61,23 @@ ShellRoot {
     MailService { id: probe; demo: true }
     Timer {
         interval: 100
-        running: Quickshell.env("JITSMAIL_INTERACTIVE") !== "1"
+        running: Quickshell.env("YETIMAIL_INTERACTIVE") !== "1"
         repeat: true
         property bool requested: false
         onTriggered: {
             if (probe.listError || probe.readError) { console.error("SMOKE FAILED: " + probe.listError + probe.readError); Qt.quit() }
             if (!requested && probe.messages.length) { requested = true; probe.readMessage(probe.messages[0].id) }
-            if (probe.message) { console.log("JITSMAIL_SMOKE_OK"); Qt.quit() }
+            if (probe.message) { console.log("YETIMAIL_SMOKE_OK"); Qt.quit() }
         }
     }
-    Timer { interval: 10000; running: Quickshell.env("JITSMAIL_INTERACTIVE") !== "1"; onTriggered: { console.error("SMOKE TIMEOUT"); Qt.quit() } }
+    Timer { interval: 10000; running: Quickshell.env("YETIMAIL_INTERACTIVE") !== "1"; onTriggered: { console.error("SMOKE TIMEOUT"); Qt.quit() } }
 }
 QML
 QT_QPA_PLATFORM=${QT_QPA_PLATFORM:-offscreen} quickshell -p "$work" --no-color 2>&1 | tee "$work/output"
-if [[ -e "$JITSMAIL_NETWORK_GUARD" ]]; then
+if [[ -e "$YETIMAIL_NETWORK_GUARD" ]]; then
     printf 'Demo unexpectedly attempted to invoke Himalaya.\n' >&2
     exit 1
 fi
-if [[ ${JITSMAIL_INTERACTIVE:-0} == 1 ]]; then exit 0; fi
-grep -q 'JITSMAIL_SMOKE_OK' "$work/output"
+if [[ ${YETIMAIL_INTERACTIVE:-0} == 1 ]]; then exit 0; fi
+grep -q 'YETIMAIL_SMOKE_OK' "$work/output"
 if grep -Eq 'TypeError|ReferenceError|Unable to assign|Failed to load configuration|SMOKE FAILED|SMOKE TIMEOUT' "$work/output"; then exit 1; fi

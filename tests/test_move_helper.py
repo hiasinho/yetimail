@@ -12,14 +12,14 @@ import unittest
 from unittest.mock import patch
 
 
-helper = runpy.run_path(str(Path(__file__).resolve().parents[1] / "bin/jitsmail-helper"))
+helper = runpy.run_path(str(Path(__file__).resolve().parents[1] / "bin/yetimail-helper"))
 
 
 class MoveHelperTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        environment = patch.dict(os.environ, {"JITSMAIL_CACHE": "0"})
+        environment = patch.dict(os.environ, {"YETIMAIL_CACHE": "0"})
         environment.start()
         self.addCleanup(environment.stop)
         self.config = Path(directory.name) / "config.toml"

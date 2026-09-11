@@ -32,11 +32,11 @@ Item {
     visible: open
 }
 QML
-ln -s "$root" "$work/Jitsmail"
+ln -s "$root" "$work/Yetimail"
 mkdir "$work/bin"
 cat > "$work/bin/himalaya" <<'SH'
 #!/bin/sh
-printf 'FORBIDDEN Himalaya invocation\n' >> "$JITSMAIL_CALLS"
+printf 'FORBIDDEN Himalaya invocation\n' >> "$YETIMAIL_CALLS"
 exit 99
 SH
 chmod +x "$work/bin/himalaya"
@@ -55,7 +55,7 @@ while [ "$#" -gt 0 ]; do
         --demo) demo=true; shift ;;
         --id) id=$2; shift 2 ;;
         --page) shift 2 ;;
-        *) printf 'BAD ARGUMENT\n' >> "$JITSMAIL_CALLS"; exit 98 ;;
+        *) printf 'BAD ARGUMENT\n' >> "$YETIMAIL_CALLS"; exit 98 ;;
     esac
 done
 # Keep discovery separate from the list/read invocation assertions.
@@ -63,7 +63,7 @@ if [ "$operation" = folders ]; then
     printf '{"folders":[{"id":"INBOX","name":"Inbox","role":"inbox"}]}\n'
     exit 0
 fi
-printf '%s account=%s config=%s demo=%s id=%s\n' "$operation" "$account" "$config" "$demo" "$id" >> "$JITSMAIL_CALLS"
+printf '%s account=%s config=%s demo=%s id=%s\n' "$operation" "$account" "$config" "$demo" "$id" >> "$YETIMAIL_CALLS"
 /usr/bin/sleep 0.25
 if [ "$operation" = list ]; then
     printf '{"account":"%s","messages":[{"id":"%s/%s","from":"Fixture","subject":"Offline","date":"today","unread":true}]}\n' "$account" "$account" "$config"
@@ -75,10 +75,10 @@ chmod +x "$work/python-fixture"
 cat > "$work/shell.qml" <<'QML'
 import QtQuick
 import Quickshell
-import "Jitsmail"
+import "Yetimail"
 ShellRoot {
     id: test
-    property string scenario: Quickshell.env("JITSMAIL_SCENARIO")
+    property string scenario: Quickshell.env("YETIMAIL_SCENARIO")
     property int phase: 0
     property int ticks: 0
     property bool failed: false
@@ -241,11 +241,11 @@ for scenario in widget accounts race missing unlaunchable; do
     case "$scenario" in
         widget|accounts|race) cp "$work/python-fixture" "$work/bin/python3" ;;
         unlaunchable)
-            printf '#!/jitsmail-test/nonexistent-interpreter\n' > "$work/bin/python3"
+            printf '#!/yetimail-test/nonexistent-interpreter\n' > "$work/bin/python3"
             chmod +x "$work/bin/python3" ;;
     esac
-    export JITSMAIL_SCENARIO="$scenario" JITSMAIL_CALLS="$work/$scenario.calls"
-    : > "$JITSMAIL_CALLS"
+    export YETIMAIL_SCENARIO="$scenario" YETIMAIL_CALLS="$work/$scenario.calls"
+    : > "$YETIMAIL_CALLS"
     # Restrict PATH, including missing-python tests: never fall back to real Python.
     if ! QT_QPA_PLATFORM=offscreen PATH="$work/bin" \
         /usr/bin/timeout --kill-after=2 10 "$quickshell" -p "$work" --no-color > "$work/$scenario.output" 2>&1; then
@@ -254,31 +254,31 @@ for scenario in widget accounts race missing unlaunchable; do
     fi
     cat "$work/$scenario.output"
     printf '%s\n' '--- fixture calls ---'
-    cat "$JITSMAIL_CALLS"
+    cat "$YETIMAIL_CALLS"
     if ! grep -q "LIFECYCLE_OK $scenario" "$work/$scenario.output" ||
        grep -Eq 'LIFECYCLE_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration' "$work/$scenario.output" ||
-       grep -Eq 'FORBIDDEN|BAD ARGUMENT' "$JITSMAIL_CALLS"; then status=1; fi
+       grep -Eq 'FORBIDDEN|BAD ARGUMENT' "$YETIMAIL_CALLS"; then status=1; fi
     case "$scenario" in
         widget)
-            if [[ $(wc -l < "$JITSMAIL_CALLS") != 1 ]] ||
-               ! grep -qx 'list account=widget config=widget-config demo=true id=none' "$JITSMAIL_CALLS"; then
+            if [[ $(wc -l < "$YETIMAIL_CALLS") != 1 ]] ||
+               ! grep -qx 'list account=widget config=widget-config demo=true id=none' "$YETIMAIL_CALLS"; then
                 echo 'LIFECYCLE_FAIL widget: unexpected launch count or non-demo invocation'; status=1
             fi ;;
         accounts)
-            if [[ $(wc -l < "$JITSMAIL_CALLS") != 3 ]] ||
-               grep -Evq '^(list|read) account=(hiash|hiasinho) config=accounts-config demo=true id=' "$JITSMAIL_CALLS" ||
-               ! grep -qx 'list account=hiash config=accounts-config demo=true id=none' "$JITSMAIL_CALLS" ||
-               ! grep -qx 'read account=hiash config=accounts-config demo=true id=hiash/accounts-config' "$JITSMAIL_CALLS" ||
-               ! grep -qx 'list account=hiasinho config=accounts-config demo=true id=none' "$JITSMAIL_CALLS"; then
+            if [[ $(wc -l < "$YETIMAIL_CALLS") != 3 ]] ||
+               grep -Evq '^(list|read) account=(hiash|hiasinho) config=accounts-config demo=true id=' "$YETIMAIL_CALLS" ||
+               ! grep -qx 'list account=hiash config=accounts-config demo=true id=none' "$YETIMAIL_CALLS" ||
+               ! grep -qx 'read account=hiash config=accounts-config demo=true id=hiash/accounts-config' "$YETIMAIL_CALLS" ||
+               ! grep -qx 'list account=hiasinho config=accounts-config demo=true id=none' "$YETIMAIL_CALLS"; then
                 echo 'LIFECYCLE_FAIL accounts: unexpected launches or account outside allowlist'; status=1
             fi ;;
         race)
-            if [[ $(grep -c '^read ' "$JITSMAIL_CALLS") != 2 ]] || grep -q 'id=duplicate' "$JITSMAIL_CALLS"; then
+            if [[ $(grep -c '^read ' "$YETIMAIL_CALLS") != 2 ]] || grep -q 'id=duplicate' "$YETIMAIL_CALLS"; then
                 echo 'LIFECYCLE_FAIL race: duplicate or missing read launch'; status=1
             fi ;;
         missing|unlaunchable)
-            if [[ -s "$JITSMAIL_CALLS" ]]; then echo 'LIFECYCLE_FAIL unexpected executable invocation'; status=1; fi ;;
+            if [[ -s "$YETIMAIL_CALLS" ]]; then echo 'LIFECYCLE_FAIL unexpected executable invocation'; status=1; fi ;;
     esac
 done
-if [[ $status == 0 ]]; then echo 'JITSMAIL_LIFECYCLE_OK'; fi
+if [[ $status == 0 ]]; then echo 'YETIMAIL_LIFECYCLE_OK'; fi
 exit "$status"

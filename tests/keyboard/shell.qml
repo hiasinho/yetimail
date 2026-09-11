@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtTest
 import Quickshell
-import "Jitsmail"
+import "Yetimail"
 
 ShellRoot {
     FloatingWindow {
@@ -171,7 +171,7 @@ ShellRoot {
                     check(!widget.confirmingDelete && widget.opened, action + " dismisses only confirmation")
                     equal(widget.pane, "reader")
                     check(area.activeFocus, action + " restores reader TextArea focus")
-                    // Native TextArea handling, not a Jitsmail Shortcut, must work.
+                    // Native TextArea handling, not a Yetimail Shortcut, must work.
                     press(Qt.Key_A, Qt.ControlModifier)
                     check(area.selectedText.length > 0, action + " restores native text selection")
                     area.deselect()
@@ -694,7 +694,7 @@ ShellRoot {
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
                 if (qtest_results.failCount === 0 && qtest_results.passCount === 20)
-                    console.log("JITSMAIL_KEYBOARD_OK")
+                    console.log("YETIMAIL_KEYBOARD_OK")
                 Qt.quit()
             }
         }

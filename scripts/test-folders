@@ -6,7 +6,7 @@ quickshell=$(command -v quickshell)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/bin"
-ln -s "$root" "$work/Jitsmail"
+ln -s "$root" "$work/Yetimail"
 cat > "$work/bin/python3" <<'SH'
 #!/bin/sh
 shift
@@ -22,7 +22,7 @@ while [ "$#" -gt 0 ]; do
         *) exit 98 ;;
     esac
 done
-printf '%s|%s|%s\n' "$operation" "$account" "$mailbox" >> "$JITSMAIL_CALLS"
+printf '%s|%s|%s\n' "$operation" "$account" "$mailbox" >> "$YETIMAIL_CALLS"
 /usr/bin/sleep 0.15
 case "$operation" in
     folders) printf '{"folders":[{"id":"in","name":"Inbox"},{"id":"opaque","name":"Sent Items"},{"id":"localized","name":"Papierkorb","role":"trash"},{"id":"a1","name":"Archive"},{"id":"a2","name":"Archives"}]}\n' ;;
@@ -36,7 +36,7 @@ chmod +x "$work/bin/python3"
 cat > "$work/shell.qml" <<'QML'
 import QtQuick
 import Quickshell
-import "Jitsmail"
+import "Yetimail"
 ShellRoot {
     id: test
     property int phase: 0
@@ -136,18 +136,18 @@ ShellRoot {
                 test.phase++
             } else if (test.phase === 13 && mail.folderId === "opaque" && !mail.loading && mail.messages.length) {
                 if (!test.check(mail.pendingFolderRole === "", "pending shortcut not consumed")) return
-                console.log("JITSMAIL_FOLDERS_OK")
+                console.log("YETIMAIL_FOLDERS_OK")
                 Qt.quit()
             }
         }
     }
 }
 QML
-export JITSMAIL_CALLS="$work/calls"
+export YETIMAIL_CALLS="$work/calls"
 QT_QPA_PLATFORM=offscreen PATH="$work/bin" /usr/bin/timeout --kill-after=2 10 "$quickshell" -p "$work" --no-color > "$work/output" 2>&1 || { cat "$work/output"; exit 1; }
 cat "$work/output"
 cat "$work/calls"
-grep -q JITSMAIL_FOLDERS_OK "$work/output"
+grep -q YETIMAIL_FOLDERS_OK "$work/output"
 ! grep -Eq 'FOLDERS_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration' "$work/output"
 grep -q 'mark|offline|localized' "$work/calls"
 grep -q 'read|offline|opaque' "$work/calls"

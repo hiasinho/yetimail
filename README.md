@@ -1,4 +1,4 @@
-# Jitsmail
+# Yetimail
 
 A keyboard-first Omarchy mail panel powered by **Himalaya 2.1**. Read and manage inbox status without leaving the desktop.
 
@@ -24,7 +24,7 @@ Inspired by [omarchy-mail](https://github.com/roymckenzie/omarchy-mail). This is
 - Python 3.11+ (standard library only); `xdg-open` and a default viewer for opening attachments.
 - Himalaya **2.1.x**, with an IMAP account configured and noninteractive authentication working. Older CLI versions use different commands/JSON and are not supported.
 
-Configure your account outside Jitsmail:
+Configure your account outside Yetimail:
 
 ```sh
 himalaya --version
@@ -32,7 +32,7 @@ himalaya configure
 himalaya --account personal --json envelope list --page-size 5
 ```
 
-Use the default account or select an account through plugin settings. Jitsmail starts at the account's default inbox alias; the folder picker discovers that account's selectable mailboxes. Keep passwords in your password manager/keyring, not plugin settings or this repository. Authentication must work without an interactive prompt; the helper has closed stdin and a 30-second timeout.
+Use the default account or select an account through plugin settings. Yetimail starts at the account's default inbox alias; the folder picker discovers that account's selectable mailboxes. Keep passwords in your password manager/keyring, not plugin settings or this repository. Authentication must work without an interactive prompt; the helper has closed stdin and a 30-second timeout.
 
 Gmail/OAuth, compose/reply, bulk operations, search, and full offline sync are outside this milestone.
 
@@ -42,18 +42,22 @@ This links your development checkout; changes remain user-owned and survive Omar
 
 ```sh
 mkdir -p ~/.config/omarchy/plugins
-ln -s "$(pwd)" ~/.config/omarchy/plugins/hiasinho.jitsmail
+ln -s "$(pwd)" ~/.config/omarchy/plugins/hiasinho.yetimail
 omarchy-shell shell rescanPlugins
-omarchy plugin enable hiasinho.jitsmail
+omarchy plugin enable hiasinho.yetimail
 ```
 
 Run from this repository's root. Enabling with defaults will query your default Himalaya account. To try the UI without any mail access first, use the isolated demo below.
+
+### Migrating from Jitsmail
+
+The plugin ID changed from `hiasinho.jitsmail` to `hiasinho.yetimail`, so existing Omarchy widget settings do not transfer automatically. Disable and remove the old plugin entry or symlink, install Yetimail as shown above, then copy the non-secret widget settings you still want into the new `hiasinho.yetimail` entry. Yetimail starts with a fresh cache and never copies cached mail from `~/.cache/jitsmail`; remove that old directory manually when you no longer need it.
 
 Settings are declared in `manifest.json` and stored in the widget's entry in `~/.config/omarchy/shell.json`. Preserve the rest of that file when editing. A widget entry looks like:
 
 ```json
 {
-  "id": "hiasinho.jitsmail",
+  "id": "hiasinho.yetimail",
   "accounts": "hiash,hiasinho",
   "account": "hiash",
   "config": "",
@@ -115,9 +119,9 @@ Press `x` to archive or `Shift+X` to trash the highlighted row in list mode or t
 
 Press `Delete` for the highlighted row in list mode or the displayed message in reader mode. The reader toolbar's **Delete** button always targets its displayed message. Outside the uniquely resolved Trash folder, both immediately move to Trash without confirmation, just like `Shift+X`. Inside that Trash folder, they **ask for confirmation of permanent removal**, showing a snapshot of the account, folder, message ID, and subject. Only `Enter` or the modal's Delete button confirms; `h`, `Esc`, or Cancel dismisses without changes. Other panel shortcuts and background controls are disabled during confirmation. Closing, navigating, or changing message/account/config state invalidates the prompt; repeated submission is guarded. Real deletion requires an explicit account.
 
-Himalaya 2.1's `message delete` follows its **trash-first policy**: it moves to the configured Trash, or requests permanent removal when already in Trash. On IMAP without UIDPLUS, a message may instead be flagged `Deleted` pending expunge; success does **not** guarantee permanent removal. An unresolved or ambiguous Trash blocks the action, not permission to bypass Trash. Role discovery uses the rules above; Himalaya's configured Trash policy remains authoritative for confirmed removal, so a differing configuration may move rather than permanently remove the message. Jitsmail never expunges or performs bulk deletion.
+Himalaya 2.1's `message delete` follows its **trash-first policy**: it moves to the configured Trash, or requests permanent removal when already in Trash. On IMAP without UIDPLUS, a message may instead be flagged `Deleted` pending expunge; success does **not** guarantee permanent removal. An unresolved or ambiguous Trash blocks the action, not permission to bypass Trash. Role discovery uses the rules above; Himalaya's configured Trash policy remains authoritative for confirmed removal, so a differing configuration may move rather than permanently remove the message. Yetimail never expunges or performs bulk deletion.
 
-After success, the source row is removed locally, selection advances to the next row (previous at the end), a matching reader is cleared, and the page is refreshed. The server's refreshed state remains authoritative, including messages pending expunge. Errors preserve the row and reader. Explicit source folders receive the same literal mailbox/alias-routing guard as other operations. Demo deletion never accesses config or Himalaya; refreshing restores synthetic messages. There is no undo in Jitsmail.
+After success, the source row is removed locally, selection advances to the next row (previous at the end), a matching reader is cleared, and the page is refreshed. The server's refreshed state remains authoritative, including messages pending expunge. Errors preserve the row and reader. Explicit source folders receive the same literal mailbox/alias-routing guard as other operations. Demo deletion never accesses config or Himalaya; refreshing restores synthetic messages. There is no undo in Yetimail.
 
 ## Reading links
 
@@ -131,11 +135,11 @@ Messages show compact attachment metadata beneath the header. Press `a` to inspe
 
 In attachment mode, `s` or **Save** writes a copy to **`~/Downloads`**. `Enter` or **Open** saves a new copy, then invokes `xdg-open` with an argument array. These keys have no attachment actions outside this mode. Nothing is opened by inspection, selection, message reading, or saving alone. Each save creates a unique filename (`name (1).ext`, etc.), never overwrites existing files or follows file symlinks, and gives the file private non-executable permissions (0600). Sender path components, controls, and overlong filenames are sanitized. Downloads must be a real directory owned by you, not writable by other users; symlinked Downloads directories are intentionally rejected. This version uses the literal `~/Downloads`, not Himalaya's or XDG's configured download directory.
 
-Opening is deliberately conservative: only `.txt` (UTF-8 plain text), PDF, PNG, JPEG, and GIF with matching MIME and basic content checks are supported. Executables, scripts, desktop shortcuts, HTML/SVG, archives, attached emails, unknown types, and mismatches remain **save-only**. This is not malware detection or a sandbox: only open files you trust, keep viewers updated, and remember that external viewers may access the network. A failed opener leaves the saved copy in place. Each viewer has an independent launcher: once it starts, further saves and opens are available immediately. Viewers may stay open indefinitely; Jitsmail does not impose a viewer lifetime timeout. Late launcher errors are shown only for the same account, message, and attachment action.
+Opening is deliberately conservative: only `.txt` (UTF-8 plain text), PDF, PNG, JPEG, and GIF with matching MIME and basic content checks are supported. Executables, scripts, desktop shortcuts, HTML/SVG, archives, attached emails, unknown types, and mismatches remain **save-only**. This is not malware detection or a sandbox: only open files you trust, keep viewers updated, and remember that external viewers may access the network. A failed opener leaves the saved copy in place. Each viewer has an independent launcher: once it starts, further saves and opens are available immediately. Viewers may stay open indefinitely; Yetimail does not impose a viewer lifetime timeout. Late launcher errors are shown only for the same account, message, and attachment action.
 
 Account/config/folder/message changes discard pending results and prevent a deferred open; closing the panel cancels a pending open too. An already-requested save can still finish on disk after navigation. Already-launched external viewers are not recalled. Demo saves produce a real synthetic `welcome.txt`, but demo opening is always suppressed.
 
-Sizes are decoded payload sizes, not the encoded transfer size; unknown sizes are labeled explicitly. Named inline parts may be listed, but unnamed inline images are omitted. Attached emails are listed as attachments without exposing their nested attachments separately. Metadata comes from the already-fetched MIME message; inspection adds no server requests. A save refetches that same message through `message read --raw` without `--seen`, preserving the selected account/config and default inbox alias. Attachment IDs are Jitsmail-local ordinal/content hashes, **not** Himalaya's sparse MIME part IDs. Name, type, and payload must still match the inspected attachment or saving fails with a reload instruction. Attached emails are saved as RFC 5322 bytes; attached multipart containers are serialized as MIME.
+Sizes are decoded payload sizes, not the encoded transfer size; unknown sizes are labeled explicitly. Named inline parts may be listed, but unnamed inline images are omitted. Attached emails are listed as attachments without exposing their nested attachments separately. Metadata comes from the already-fetched MIME message; inspection adds no server requests. A save refetches that same message through `message read --raw` without `--seen`, preserving the selected account/config and default inbox alias. Attachment IDs are Yetimail-local ordinal/content hashes, **not** Himalaya's sparse MIME part IDs. Name, type, and payload must still match the inspected attachment or saving fails with a reload instruction. Attached emails are saved as RFC 5322 bytes; attached multipart containers are serialized as MIME.
 
 ## Develop and test
 
@@ -150,8 +154,8 @@ scripts/test-deletions
 scripts/test-keyboard
 scripts/test-attachments
 scripts/test-prefetch
-bin/jitsmail-helper list --demo
-bin/jitsmail-helper read --demo --id demo-1
+bin/yetimail-helper list --demo
+bin/yetimail-helper read --demo --id demo-1
 ```
 
 The smoke test launches a temporary **offscreen** Quickshell with demo data, tests the QML → helper → inbox/read round trip, then exits. It does not install/enable anything or access your mail. Override `OMARCHY_SHELL_PATH` if Omarchy's shell is elsewhere. A guard executable prevents accidental Himalaya access even if demo mode regresses.
@@ -173,8 +177,8 @@ scripts/demo-ui
 This opens a separate demo shell with two synthetic accounts, not your running Omarchy shell. Stop it with Ctrl+C in the terminal. Its logged temporary config path can also be used for demo-only visual checks:
 
 ```sh
-quickshell -p /tmp/<demo-config> ipc call jitsmailDemo readFirst
-quickshell -p /tmp/<demo-config> ipc call jitsmailDemo help
+quickshell -p /tmp/<demo-config> ipc call yetimailDemo readFirst
+quickshell -p /tmp/<demo-config> ipc call yetimailDemo help
 ```
 
 Neither command accesses real accounts.
@@ -184,7 +188,7 @@ Neither command accesses real accounts.
 The reference-inspired layout uses a compact monospace sidebar, bordered account selectors, dense sender/subject rows, and a separate message header above the reader. The sidebar names the current folder, sizes short mailbox pages closer to their content until the reader opens, and combines message count, page status, navigation, and shortcut help in one footer. The compact reader header shows the sender, recipients, and a short timestamp without redundant From/Date rows. HTML-to-text conversion preserves paragraph breaks while collapsing excessive blank space; it still never renders active HTML. Press `v` (or the header's ≡ button) to view and copy complete headers, including long subjects and recipient lists. Keyboard help opens as a floating shortcut card rather than shifting the inbox. Controls only expose implemented actions; compose and search are not placeholders.
 
 ```text
-Widget.qml → MailService.qml → bin/jitsmail-helper → Himalaya → IMAP
+Widget.qml → MailService.qml → bin/yetimail-helper → Himalaya → IMAP
   commands      async JSON       normalization
   ↕ data / signals
 ui/*.qml
@@ -195,10 +199,10 @@ ui/*.qml
 
 The adapter executes argument arrays, never shell command strings. Account credentials stay under Himalaya's control. The helper suppresses backend stderr in UI errors because it may contain private configuration details. For connection errors, troubleshoot with Himalaya directly in a private terminal.
 
-Processed messages are cached in `$XDG_CACHE_HOME/jitsmail/messages.sqlite3` (normally `~/.cache/jitsmail/messages.sqlite3`). The cache contains displayed headers, plain-text bodies, links, and attachment metadata, but not raw MIME or attachment payloads. It expires entries after 30 days, evicts least-recently-used entries above 100 MiB, and skips individual processed messages above 5 MiB. The directory is owner-only and database/sidecar permissions are tightened to 0600; this is not encryption, so system disk encryption is still recommended.
+Processed messages are cached in `$XDG_CACHE_HOME/yetimail/messages.sqlite3` (normally `~/.cache/yetimail/messages.sqlite3`). The cache contains displayed headers, plain-text bodies, links, and attachment metadata, but not raw MIME or attachment payloads. It expires entries after 30 days, evicts least-recently-used entries above 100 MiB, and skips individual processed messages above 5 MiB. The directory is owner-only and database/sidecar permissions are tightened to 0600; this is not encryption, so system disk encryption is still recommended.
 
 While the panel's message list is open, resting on a row for 300 ms queues that message and the next two for one-at-a-time background prefetch. Cached opens avoid Himalaya and network access, although they still start the small Python helper. Effective config/account, mailbox, raw message ID, parser version, and a versioned envelope fingerprint isolate entries. Fingerprints exclude mutable flags and persist across list refreshes and restarts. Envelopes lacking a nonempty ID/date/sender address or a string subject bypass caching. This is a best-effort identity: Himalaya's cross-backend listing does not expose durable mailbox generations, so reused IDs with identical envelope metadata or content-only server edits cannot be detected; force reload or clear the cache when needed. Moves and deletes invalidate the affected raw ID across all mailbox aliases in that account/config, retaining unrelated cached messages and in-flight prefetch writes. This may also evict an unrelated same-ID message in another mailbox; destination IDs are backend-assigned, and changed destination envelopes use new fingerprints. Old listing-token cache entries are discarded automatically on schema upgrade. Opening and prefetching omit Himalaya's `--seen` flag.
 
-Clear all cached messages with `bin/jitsmail-helper cache-clear`. Set `JITSMAIL_CACHE=0` in the shell environment to disable both cache reads and writes (background prefetch still runs but provides no speed benefit, so disabling the cache is mainly intended for troubleshooting). Cache failures fall back to ordinary Himalaya reads. This is a performance cache, not full offline sync: listing mail and uncached messages still requires the configured backend. Email text is explicitly displayed as plain text, never executable HTML. Large messages still need to be fetched by Himalaya; this implementation does not yet enforce a raw-download size cap.
+Clear all cached messages with `bin/yetimail-helper cache-clear`. Set `YETIMAIL_CACHE=0` in the shell environment to disable both cache reads and writes (background prefetch still runs but provides no speed benefit, so disabling the cache is mainly intended for troubleshooting). The legacy `JITSMAIL_CACHE` variable remains a compatibility fallback when `YETIMAIL_CACHE` is unset; the new name takes precedence. Cache failures fall back to ordinary Himalaya reads. This is a performance cache, not full offline sync: listing mail and uncached messages still requires the configured backend. Email text is explicitly displayed as plain text, never executable HTML. Large messages still need to be fetched by Himalaya; this implementation does not yet enforce a raw-download size cap.
 
 Offline tests cover fixtures, JSON normalization, MIME parsing, safe command arguments, errors, and the QML integration. A live-server smoke test is still required with your configured account before treating this as a daily mail client.

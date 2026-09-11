@@ -212,7 +212,7 @@ Item {
     readonly property int unread: messages.filter(function(m) { return m.unread }).length
 
     function command(operation) {
-        var args = ["python3", decodeURIComponent(Qt.resolvedUrl("bin/jitsmail-helper").toString().replace(/^file:\/\//, "")), operation]
+        var args = ["python3", decodeURIComponent(Qt.resolvedUrl("bin/yetimail-helper").toString().replace(/^file:\/\//, "")), operation]
         if (account) args.push("--account", account)
         if (config) args.push("--config", config)
         if (demo) args.push("--demo")

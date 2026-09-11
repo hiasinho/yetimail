@@ -39,27 +39,27 @@ case "$operation" in
         if [ "$attachment" = invalid ]; then id=wrong; fi
         path='/tmp/attachment with spaces.txt'
         if [ "$attachment" = linger ]; then path=/tmp/linger.txt; fi
-        if [ "$attachment" = missing ]; then /usr/bin/rm "$JITSMAIL_TEST_BIN/xdg-open"; fi
+        if [ "$attachment" = missing ]; then /usr/bin/rm "$YETIMAIL_TEST_BIN/xdg-open"; fi
         printf '{"id":"%s","attachment":"%s","path":"%s","openable":true}\n' "$id" "$attachment" "$path" ;;
     *) exit 98 ;;
 esac
 SH
 cat > "$work/bin/xdg-open" <<'SH'
 #!/bin/sh
-printf '%s\n' "$#" "$@" >> "$JITSMAIL_OPEN_ARGS"
+printf '%s\n' "$#" "$@" >> "$YETIMAIL_OPEN_ARGS"
 if [ "$1" = /tmp/linger.txt ]; then
-    printf '%s\n' "$$" >> "$JITSMAIL_OPENER_PIDS"
+    printf '%s\n' "$$" >> "$YETIMAIL_OPENER_PIDS"
     /usr/bin/sleep 32 &
     sleeper=$!
     trap 'kill "$sleeper" 2>/dev/null || true; wait "$sleeper" 2>/dev/null || true; exit 7' TERM INT
     wait "$sleeper"
-    printf 'finished\n' >> "$JITSMAIL_OPENER_FINISHED"
+    printf 'finished\n' >> "$YETIMAIL_OPENER_FINISHED"
 fi
 exit 7
 SH
 cat > "$work/bin/himalaya" <<'SH'
 #!/bin/sh
-printf 'FORBIDDEN Himalaya\n' >> "$JITSMAIL_GUARD"
+printf 'FORBIDDEN Himalaya\n' >> "$YETIMAIL_GUARD"
 exit 99
 SH
 chmod +x "$work/bin/"*
@@ -187,22 +187,22 @@ ShellRoot {
                 mail.saveAttachment("fixture", false); break
             case 24:
                 if (!test.check(!mail.actionError && mail.attachmentStatus.indexOf("Saved:") === 0, "save works after launch failure")) return
-                console.log("JITSMAIL_ATTACHMENTS_OK"); Qt.quit(); return
+                console.log("YETIMAIL_ATTACHMENTS_OK"); Qt.quit(); return
             }
             test.phase++
         }
     }
 }
 QML
-export JITSMAIL_GUARD="$work/guard" JITSMAIL_OPEN_ARGS="$work/open-args"
-export JITSMAIL_OPENER_PIDS="$work/opener-pids" JITSMAIL_OPENER_FINISHED="$work/opener-finished" JITSMAIL_TEST_BIN="$work/bin"
-: > "$JITSMAIL_GUARD"
+export YETIMAIL_GUARD="$work/guard" YETIMAIL_OPEN_ARGS="$work/open-args"
+export YETIMAIL_OPENER_PIDS="$work/opener-pids" YETIMAIL_OPENER_FINISHED="$work/opener-finished" YETIMAIL_TEST_BIN="$work/bin"
+: > "$YETIMAIL_GUARD"
 QT_QPA_PLATFORM=offscreen PATH="$work/bin" /usr/bin/timeout --kill-after=2 60 "$quickshell" -p "$work" --no-color > "$work/output" 2>&1 || { /usr/bin/cat "$work/output"; exit 1; }
 /usr/bin/cat "$work/output"
-grep -q JITSMAIL_ATTACHMENTS_OK "$work/output"
+grep -q YETIMAIL_ATTACHMENTS_OK "$work/output"
 ! grep -E 'ATTACHMENTS_FAIL|ReferenceError|TypeError|SyntaxError' "$work/output"
-test ! -s "$JITSMAIL_GUARD"
+test ! -s "$YETIMAIL_GUARD"
 printf '1\n/tmp/attachment with spaces.txt\n1\n/tmp/linger.txt\n1\n/tmp/linger.txt\n1\n/tmp/linger.txt\n' > "$work/expected-open-args"
-cmp "$work/expected-open-args" "$JITSMAIL_OPEN_ARGS"
+cmp "$work/expected-open-args" "$YETIMAIL_OPEN_ARGS"
 printf 'finished\nfinished\n' > "$work/expected-finished"
-cmp "$work/expected-finished" "$JITSMAIL_OPENER_FINISHED"
+cmp "$work/expected-finished" "$YETIMAIL_OPENER_FINISHED"

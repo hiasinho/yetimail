@@ -257,10 +257,10 @@ class MessageCacheTest(unittest.TestCase):
     def test_xdg_path_and_relative_xdg_fallback(self):
         with patch.dict(os.environ, {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / "xdg")}):
             self.put(cache=MessageCache(clock=lambda: self.now))
-            self.assertTrue((self.home / "xdg/jitsmail/messages.sqlite3").exists())
+            self.assertTrue((self.home / "xdg/yetimail/messages.sqlite3").exists())
         with patch.dict(os.environ, {"HOME": str(self.home), "XDG_CACHE_HOME": "relative"}):
             self.put(cache=MessageCache(clock=lambda: self.now))
-            self.assertTrue((self.home / ".cache/jitsmail/messages.sqlite3").exists())
+            self.assertTrue((self.home / ".cache/yetimail/messages.sqlite3").exists())
 
     def test_symlink_directory_database_and_sidecar_are_rejected(self):
         target = self.home / "target"

@@ -6,13 +6,14 @@ import json
 import os
 from pathlib import Path
 import runpy
+from types import SimpleNamespace
 import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
 
 
-HELPER = Path(__file__).resolve().parents[1] / "bin" / "jitsmail-helper"
+HELPER = Path(__file__).resolve().parents[1] / "bin" / "yetimail-helper"
 helper = runpy.run_path(str(HELPER))
 
 
@@ -21,11 +22,24 @@ class HelperTest(unittest.TestCase):
         output = io.StringIO()
         # Ordinary protocol tests must never touch the developer's real cache.
         cache_setting = "1" if getattr(self, "cache_enabled", False) else "0"
-        with patch.dict(os.environ, {"JITSMAIL_CACHE": cache_setting}), contextlib.redirect_stdout(output):
+        with patch.dict(os.environ, {"YETIMAIL_CACHE": cache_setting}), contextlib.redirect_stdout(output):
             status = helper["main"](list(args))
         lines = output.getvalue().splitlines()
         self.assertEqual(len(lines), 1)
         return status, json.loads(lines[0])
+
+    def test_cache_environment_uses_new_name_and_supports_legacy_fallback(self):
+        globals_ = helper["message_cache"].__globals__
+        args = SimpleNamespace(cache_identity="identity")
+        replacements = {"cache_context": lambda unused: "context",
+                        "MessageCache": lambda: "cache"}
+        with patch.dict(globals_, replacements):
+            with patch.dict(os.environ, {"JITSMAIL_CACHE": "0"}, clear=True):
+                self.assertEqual(helper["message_cache"](args), (None, None))
+            with patch.dict(os.environ, {"YETIMAIL_CACHE": "1", "JITSMAIL_CACHE": "0"}, clear=True):
+                self.assertEqual(helper["message_cache"](args), ("cache", "context"))
+            with patch.dict(os.environ, {"YETIMAIL_CACHE": "0", "JITSMAIL_CACHE": "1"}, clear=True):
+                self.assertEqual(helper["message_cache"](args), (None, None))
 
     def test_folders_normalize_ids_names_and_optional_roles(self):
         mailboxes = [{"id": "opaque-1", "name": "Boîte envoyée", "total": 5},
@@ -111,7 +125,7 @@ class HelperTest(unittest.TestCase):
                 for _ in range(2):
                     self.assertEqual(self.invoke("read", "--config", str(config), "--id", "42")[0], 0)
                 self.assertEqual(run.call_count, 2)
-                self.assertFalse((Path(directory) / "jitsmail").exists())
+                self.assertFalse((Path(directory) / "yetimail").exists())
 
     def test_stable_fingerprint_excludes_flags_and_rejects_sparse_envelopes(self):
         envelope = {"id": "A", "subject": "Hello", "date": "2026-01-15T10:30:00Z",
@@ -362,7 +376,7 @@ class HelperTest(unittest.TestCase):
                     "id", "subject", "from", "to", "date", "body", "links", "attachments"})
                 if envelope["id"] == "demo-1":
                     self.assertEqual(message["links"], [{"label": "example.com", "url":
-                        "https://example.com/welcome?source=jitsmail-demo"}])
+                        "https://example.com/welcome?source=yetimail-demo"}])
                     self.assertIn("[1]", message["body"])
                     self.assertEqual(message["attachments"], helper["DEMO_MESSAGES"][0]["attachments"])
                     self.assertTrue(message["attachments"][0]["openable"])

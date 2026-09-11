@@ -80,6 +80,22 @@ Item {
         return false
     }
 
+    function conventionalFolderName(folder) {
+        var name = folder.name.toLowerCase()
+        var separator = name.lastIndexOf("/")
+        return separator >= 0 ? name.slice(separator + 1) : name
+    }
+
+    function inboxFirst(discovered) {
+        var inbox = []
+        var other = []
+        discovered.forEach(function(folder) {
+            if (folder.role === "inbox" || (!folder.role && conventionalFolderName(folder) === "inbox")) inbox.push(folder)
+            else other.push(folder)
+        })
+        return inbox.concat(other)
+    }
+
     // Never defer a message action across asynchronous discovery or navigation.
     // The caller must retry with its current target after discovery completes.
     function resolveFolderRole(role) {
@@ -95,11 +111,7 @@ Item {
             var names = {inbox: ["inbox"], sent: ["sent", "sent mail", "sent items", "sent messages"],
                          archive: ["archive", "archives", "all mail"], trash: ["trash", "deleted items", "deleted messages"]}
             matches = folders.filter(function(f) {
-                if (f.role) return false
-                var name = f.name.toLowerCase()
-                var separator = name.lastIndexOf("/")
-                if (separator >= 0) name = name.slice(separator + 1)
-                return names[role].indexOf(name) >= 0
+                return !f.role && names[role].indexOf(conventionalFolderName(f)) >= 0
             })
         }
         if (matches.length === 1) return matches[0]
@@ -577,7 +589,7 @@ Item {
                 if (!Array.isArray(data.folders) || data.folders.some(function(f) {
                     return !f || typeof f.id !== "string" || !f.id || typeof f.name !== "string" || !f.name
                 })) throw new Error("Invalid folder list from mail helper.")
-                root.folders = data.folders
+                root.folders = root.inboxFirst(data.folders)
                 root.foldersLoaded = true
                 root.retryPendingFolderRole()
             } catch (e) { root.pendingFolderRole = ""; root.foldersError = e.message }

@@ -25,7 +25,7 @@ done
 printf '%s|%s|%s\n' "$operation" "$account" "$mailbox" >> "$YETIMAIL_CALLS"
 /usr/bin/sleep 0.15
 case "$operation" in
-    folders) printf '{"folders":[{"id":"in","name":"Inbox"},{"id":"opaque","name":"Sent Items"},{"id":"localized","name":"Papierkorb","role":"trash"},{"id":"a1","name":"Archive"},{"id":"a2","name":"Archives"}]}\n' ;;
+    folders) printf '{"folders":[{"id":"opaque","name":"Sent Items"},{"id":"localized","name":"Papierkorb","role":"trash"},{"id":"a1","name":"Archive"},{"id":"a2","name":"Archives"},{"id":"in","name":"Inbox"}]}\n' ;;
     list) printf '{"messages":[{"id":"same","subject":"%s","unread":true}],"page":1,"hasNext":false}\n' "$mailbox" ;;
     read) printf '{"id":"same","subject":"%s","body":"offline","attachments":[]}\n' "$mailbox" ;;
     mark) /usr/bin/sleep 0.35; printf '{"id":"same","seen":true}\n' ;;
@@ -69,6 +69,7 @@ ShellRoot {
                 test.phase++
             } else if (test.phase === 1 && mail.folderId === "opaque" && !mail.loading && !mail.reading && mail.messages.length) {
                 if (!test.check(mail.folderName === "Sent Items" && mail.message === null && mail.selectedId === "" && mail.page === 1, "folder reset")) return
+                if (!test.check(mail.folders[0].id === "in", "Inbox sorted first")) return
                 var discovered = mail.folders
                 mail.folders = [{id: "[Gmail]/Trash", name: "[Gmail]/Trash"},
                                 {id: "[Gmail]/All Mail", name: "[Gmail]/All Mail"}]

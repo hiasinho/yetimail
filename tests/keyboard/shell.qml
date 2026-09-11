@@ -63,16 +63,18 @@ ShellRoot {
                 wait(50)
             }
             function test_delete_confirmation() {
+                mail.folderId = "Trash"; widget.syncCursor()
                 press(Qt.Key_J); press(Qt.Key_Delete)
-                check(widget.confirmingDelete, "Delete always asks")
+                check(widget.confirmingDelete, "Delete in Trash asks")
                 equal(widget.deleteSnapshot.id, "alpha/2")
                 equal(widget.deleteSnapshot.account, "alpha")
-                equal(widget.deleteSnapshot.folder, "")
+                equal(widget.deleteSnapshot.folder, "Trash")
                 equal(widget.deleteSnapshot.subject, "Fixture 2")
                 for (var key of [Qt.Key_J, Qt.Key_K, Qt.Key_L, Qt.Key_Right, Qt.Key_Left,
                         Qt.Key_F, Qt.Key_O, Qt.Key_V, Qt.Key_A, Qt.Key_S, Qt.Key_M, Qt.Key_U,
                         Qt.Key_N, Qt.Key_P, Qt.Key_R, Qt.Key_Tab, Qt.Key_BracketRight,
-                        Qt.Key_BracketLeft, Qt.Key_Question, Qt.Key_Q, Qt.Key_Delete, Qt.Key_Space]) press(key)
+                        Qt.Key_BracketLeft, Qt.Key_Question, Qt.Key_Q, Qt.Key_Delete, Qt.Key_X, Qt.Key_Space]) press(key)
+                press(Qt.Key_X, Qt.ShiftModifier)
                 press(Qt.Key_M, Qt.ShiftModifier); press(Qt.Key_D, Qt.ControlModifier)
                 press(Qt.Key_G); press(Qt.Key_T)
                 equal(mail.calls.length, 0, "all other modal shortcuts blocked")
@@ -98,7 +100,7 @@ ShellRoot {
                 widget.cursorId = "alpha/4"
                 var button = find(widget, function(item) { return item.objectName === "readerDelete" })
                 mouseClick(button, button.width / 2, button.height / 2); wait(30)
-                check(widget.confirmingDelete, "toolbar always asks")
+                check(widget.confirmingDelete, "toolbar in Trash asks")
                 equal(widget.deleteSnapshot.id, "alpha/3", "toolbar targets displayed message")
                 var confirm = find(widget, function(item) { return item.objectName === "confirmDelete" })
                 mouseClick(confirm, confirm.width / 2, confirm.height / 2); wait(30)
@@ -106,6 +108,7 @@ ShellRoot {
                 equal(mail.selectedId, ""); equal(mail.message, null)
             }
             function test_delete_cancel_restores_focus() {
+                mail.folderId = "Trash"; widget.syncCursor()
                 press(Qt.Key_Return)
                 check(area.activeFocus, "reader starts focused")
                 var calls = mail.calls.length
@@ -134,6 +137,7 @@ ShellRoot {
                 check(!widget.confirmingDelete && !area.activeFocus, "closing does not restore reader focus")
             }
             function test_delete_stale_and_busy() {
+                mail.folderId = "Trash"; widget.syncCursor()
                 for (var flag of ["loading", "reading", "marking", "moving", "deleting", "savingAttachment", "openingAttachment"]) {
                     mail[flag] = true
                     press(Qt.Key_Delete)
@@ -148,7 +152,7 @@ ShellRoot {
                     mail[flag] = false
                 }
                 var mutations = [function() { widget.close() }, function() { mail.generation++ },
-                    function() { mail.folderId = "Trash" }, function() { widget.selectedAccount = "beta" },
+                    function() { mail.folderId = "INBOX" }, function() { widget.selectedAccount = "beta" },
                     function() { widget.cursorId = "alpha/9" }, function() { mail.loading = true },
                     function() { mail.messages = mail.messages.slice() }, function() { mail.readRequest++ },
                     function() { mail.listRequest++ }, function() { mail.page++ },
@@ -157,6 +161,7 @@ ShellRoot {
                         return Object.assign({}, row, {subject: "changed"}) }) }]
                 for (var mutate of mutations) {
                     init()
+                    mail.folderId = "Trash"; widget.syncCursor()
                     widget.requestDelete(widget.targetId)
                     check(widget.confirmingDelete)
                     var stale = widget.deleteSnapshot
@@ -168,6 +173,71 @@ ShellRoot {
                     widget.confirmDelete()
                     equal(mail.calls.filter(function(c) { return c.operation === "delete" }).length, 0, "stale snapshot never deletes")
                 }
+            }
+            function test_archive_and_trash() {
+                press(Qt.Key_J); press(Qt.Key_X)
+                equal(mail.calls[0].operation, "move")
+                equal(mail.calls[0].id, "alpha/2")
+                equal(mail.calls[0].seen, "Archive")
+                equal(widget.cursorId, "alpha/3")
+                check(!widget.confirmingDelete)
+                press(Qt.Key_Return)
+                widget.cursorId = "alpha/4"
+                press(Qt.Key_X, Qt.ShiftModifier)
+                equal(mail.calls[mail.calls.length - 1].id, "alpha/3", "reader target")
+                equal(mail.calls[mail.calls.length - 1].seen, "Trash")
+                check(!widget.confirmingDelete)
+                var count = mail.calls.length
+                press(Qt.Key_Delete)
+                equal(mail.calls.length, count + 1)
+                equal(mail.calls[mail.calls.length - 1].operation, "move")
+                equal(mail.calls[mail.calls.length - 1].seen, "Trash", "Delete outside Trash moves immediately")
+                check(!widget.confirmingDelete)
+                press(Qt.Key_Return)
+                var displayed = mail.selectedId
+                widget.cursorId = "alpha/9"
+                var button = find(widget, function(item) { return item.objectName === "readerDelete" })
+                mouseClick(button, button.width / 2, button.height / 2); wait(30)
+                equal(mail.calls[mail.calls.length - 1].operation, "move")
+                equal(mail.calls[mail.calls.length - 1].id, displayed, "toolbar trashes displayed message")
+                equal(mail.calls[mail.calls.length - 1].seen, "Trash")
+                check(!widget.confirmingDelete)
+                mail.folderId = "Trash"
+                widget.syncCursor()
+                mail.calls = []
+                press(Qt.Key_X, Qt.ShiftModifier)
+                equal(mail.calls.length, 0, "Shift+X in Trash is inert")
+                check(!widget.confirmingDelete)
+                mail.folderId = "Archive"
+                widget.syncCursor()
+                press(Qt.Key_X)
+                equal(mail.calls.length, 0, "x in Archive is inert")
+                mail.folderId = "INBOX"
+                widget.syncCursor()
+                for (var flag of ["loading", "reading", "marking", "moving", "deleting", "savingAttachment", "openingAttachment"]) {
+                    mail[flag] = true
+                    press(Qt.Key_X); press(Qt.Key_X, Qt.ShiftModifier); press(Qt.Key_Delete)
+                    equal(mail.calls.length, 0, flag + " blocks moves")
+                    mail[flag] = false
+                }
+                for (var modal of ["showHelp", "showFolders"]) {
+                    widget[modal] = true
+                    press(Qt.Key_X); press(Qt.Key_X, Qt.ShiftModifier); press(Qt.Key_Delete)
+                    equal(mail.calls.length, 0, modal + " blocks moves")
+                    widget[modal] = false
+                }
+                widget.close()
+                widget.moveToRole(widget.targetId, "trash")
+                equal(mail.calls.length, 0, "closed panel is inert")
+                widget.opened = true
+                var folders = mail.folders
+                for (var unavailable of [[], folders.concat([{id: "Trash2", name: "Trash2", role: "trash"}, {id: "Archive2", name: "Archive2", role: "archive"}])]) {
+                    mail.folders = unavailable
+                    press(Qt.Key_X); press(Qt.Key_X, Qt.ShiftModifier); press(Qt.Key_Delete)
+                    equal(mail.calls.length, 0, "unresolved roles never mutate")
+                    check(!widget.confirmingDelete)
+                }
+                mail.folders = folders
             }
             function test_move_picker() {
                 mail.folderId = "INBOX"
@@ -565,7 +635,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 17)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 18)
                     console.log("JITSMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

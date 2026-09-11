@@ -74,16 +74,32 @@ Item {
             loadFolders()
             return true
         }
+        var folder = resolveFolderRole(role)
+        if (folder) return selectFolder(folder.id)
+        if (role === "inbox" && !foldersError) return selectFolder("")
+        return false
+    }
+
+    // Never defer a message action across asynchronous discovery or navigation.
+    // The caller must retry with its current target after discovery completes.
+    function resolveFolderRole(role) {
+        foldersError = ""
+        if (["inbox", "sent", "archive", "trash"].indexOf(role) < 0) return null
+        if (!foldersLoaded || foldersLoading) {
+            loadFolders()
+            foldersError = "Loading folders. Retry the action when discovery finishes."
+            return null
+        }
         var matches = folders.filter(function(f) { return f.role === role })
         if (!matches.length) {
             var names = {inbox: ["inbox"], sent: ["sent", "sent mail", "sent items", "sent messages"],
                          archive: ["archive", "archives"], trash: ["trash", "deleted items", "deleted messages"]}
             matches = folders.filter(function(f) { return !f.role && names[role].indexOf(f.name.toLowerCase()) >= 0 })
         }
-        if (matches.length === 1) return selectFolder(matches[0].id)
-        if (!matches.length && role === "inbox") return selectFolder("")
+        if (matches.length === 1) return matches[0]
+        if (!matches.length && role === "inbox") return null
         foldersError = matches.length ? "More than one " + role + " folder is available. Choose a folder." : "No known " + role + " folder is available."
-        return false
+        return null
     }
     property var messages: []
     property var message: null
@@ -300,6 +316,15 @@ Item {
         deleteProcess.command = args.concat(["--id", id])
         deleteProcess.running = true
         return true
+    }
+
+    // Archive/trash shortcuts are moves only, including when already in Trash.
+    function moveMessageToRole(id, role) {
+        if (!ready || !active || loading || reading || marking || deleting || moving || savingAttachment || openingAttachment
+            || ["archive", "trash"].indexOf(role) < 0) return false
+        var folder = resolveFolderRole(role)
+        if (!folder || folder.id === folderId) return false
+        return moveMessage(id, folder.id)
     }
 
     function moveCurrent() {

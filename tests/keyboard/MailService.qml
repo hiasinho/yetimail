@@ -34,6 +34,14 @@ Item {
         if (folder) selectFolder(folder.id)
         else foldersError = "Folder role unavailable: " + role
     }
+    function resolveFolderRole(role) {
+        var matches = folders.filter(function(item) { return item.role === role })
+        return matches.length === 1 ? matches[0] : null
+    }
+    function moveMessageToRole(id, role) {
+        var folder = resolveFolderRole(role)
+        return folder && folder.id !== folderId ? moveMessage(id, folder.id) : false
+    }
     property bool loading: false
     property bool reading: false
     property bool marking: false

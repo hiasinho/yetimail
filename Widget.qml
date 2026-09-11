@@ -31,10 +31,21 @@ BarWidget {
     property string moveNextId: ""
     property var deleteSnapshot: null
     readonly property bool confirmingDelete: deleteSnapshot !== null
+    function moveToRole(id, role) {
+        if (!opened || busy || confirmingDelete || showHelp || showFolders) return
+        var index = mail.messages.findIndex(function(m) { return m.id === id })
+        if (index < 0) return
+        var next = mail.messages[index + 1] || mail.messages[index - 1]
+        moveNextId = next ? next.id : ""
+        if (!mail.moveMessageToRole(id, role)) moveNextId = ""
+    }
     function requestDelete(id) {
         if (!opened || busy || confirmingDelete || showHelp || showFolders) return
         var envelope = mail.messages.find(function(m) { return m.id === id })
         if (!envelope) return
+        var trash = mail.resolveFolderRole("trash")
+        if (!trash) return
+        if (trash.id !== mail.folderId) { moveToRole(id, "trash"); return }
         deleteSnapshot = {account: mail.account, folder: mail.folderId, folderName: mail.folderName,
             id: id, subject: envelope.subject || "(No subject)", generation: mail.generation,
             page: mail.page, listRequest: mail.listRequest, readRequest: mail.readRequest,
@@ -438,6 +449,8 @@ BarWidget {
             Shortcut { sequence: "Escape"; enabled: root.opened && !root.confirmingDelete; onActivated: root.handleEscape() }
             Shortcut { sequence: "Q"; enabled: root.opened && !root.confirmingDelete; onActivated: root.close() }
 
+            Shortcut { sequence: "X"; autoRepeat: false; enabled: root.opened && !root.confirmingDelete && !root.busy; onActivated: root.moveToRole(root.targetId, "archive") }
+            Shortcut { sequence: "Shift+X"; autoRepeat: false; enabled: root.opened && !root.confirmingDelete && !root.busy; onActivated: root.moveToRole(root.targetId, "trash") }
             Shortcut { sequence: "Delete"; autoRepeat: false; enabled: root.opened && !root.confirmingDelete && !root.busy; onActivated: root.requestDelete(root.targetId) }
             Shortcut { sequences: ["Return", "Enter"]; autoRepeat: false; enabled: root.opened && root.confirmingDelete; onActivated: root.confirmDelete() }
             Shortcut { sequences: ["H", "Escape"]; autoRepeat: false; enabled: root.opened && root.confirmingDelete; onActivated: root.cancelDelete() }
@@ -574,7 +587,7 @@ BarWidget {
                             MailButton { text: "↗"; tooltipText: "Show links (o)"; selected: root.showLinks; enabled: !!mail.message && !root.busy; onClicked: root.toggleLinks() }
                             MailButton { objectName: "readerMarkRead"; text: "✓"; tooltipText: "Mark this message read (m)"; enabled: !!mail.message && !!root.displayedEnvelope && root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, true) }
                             MailButton { objectName: "readerMarkUnread"; text: "●"; tooltipText: "Mark this message unread (u)"; enabled: !!mail.message && !!root.displayedEnvelope && !root.displayedEnvelope.unread && !root.busy; onClicked: root.markMessage(mail.selectedId, false) }
-                            MailButton { objectName: "readerDelete"; text: "Delete"; tooltipText: "Delete this message (Delete) · confirmation required"; enabled: !!mail.message && !!root.displayedEnvelope && !root.busy; onClicked: root.requestDelete(mail.selectedId) }
+                            MailButton { objectName: "readerDelete"; text: "Delete"; tooltipText: "Trash this message (Delete) · in Trash, confirm removal"; enabled: !!mail.message && !!root.displayedEnvelope && !root.busy; onClicked: root.requestDelete(mail.selectedId) }
                             MailButton { text: "×"; tooltipText: "Close (q)"; onClicked: root.close() }
                         }
                         MailLabel {
@@ -769,7 +782,7 @@ BarWidget {
                     anchors.centerIn: parent
                     width: Math.max(0, parent.width - 48)
                     spacing: 14
-                    MailLabel { text: "Delete this message?"; font.pixelSize: 16; font.bold: true }
+                    MailLabel { text: "Permanently remove this message?"; font.pixelSize: 16; font.bold: true }
                     MailLabel {
                         Layout.fillWidth: true
                         text: root.deleteSnapshot ? "Account: " + (root.deleteSnapshot.account || (mail.demo ? "Demo" : "Default account (explicit account required)")) +
@@ -781,7 +794,7 @@ BarWidget {
                     }
                     MailLabel {
                         Layout.fillWidth: true
-                        text: "Himalaya moves this message to Trash, or requests permanent removal if it is already in Trash. Without IMAP UIDPLUS, it may only be flagged Deleted pending expunge. If Trash cannot be resolved, deletion fails. Jitsmail does not expunge."
+                        text: "Request permanent removal from Trash. Without IMAP UIDPLUS, Himalaya may only flag the message Deleted pending expunge. Its configured Trash policy remains authoritative. Jitsmail does not expunge."
                         wrapMode: Text.Wrap
                     }
                     MailLabel { visible: mail.demo; text: "Demo only: no real mail changes; refresh restores fixtures."; Layout.fillWidth: true; wrapMode: Text.Wrap }
@@ -923,7 +936,8 @@ BarWidget {
                                 ["a", "Attachments: j/k select"],
                                 ["s / Enter", "Save / open attachment (in a)"],
                                 ["M", "Move message to folder"],
-                                ["Delete", "Delete message · confirm Enter"],
+                                ["x / Shift+X", "Archive / trash · immediately"],
+                                ["Delete", "Trash · in Trash, confirm removal"],
                                 ["m / u", "Mark read / unread"],
                                 ["r", "Refresh folder"],
                                 ["Ctrl+c", "Copy selected text"],

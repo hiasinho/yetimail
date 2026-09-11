@@ -25,7 +25,7 @@ done
 printf '%s|%s|%s|%s|%s|%s\n' "$operation" "$account" "$mailbox" "$id" "$destination" "$page" >> "$JITSMAIL_CALLS"
 /usr/bin/sleep 0.1
 case "$operation" in
-    folders) printf '%s\n' '{"folders":[{"id":"in","name":"Inbox","role":"inbox"},{"id":"Projects / Exact","name":"Inbox"},{"id":"fail","name":"Fail"},{"id":"bad","name":"Bad"},{"id":"launch","name":"Launch"}]}' ;;
+    folders) printf '%s\n' '{"folders":[{"id":"in","name":"Inbox","role":"inbox"},{"id":"Projects / Exact","name":"Archive","role":"archive"},{"id":"fail","name":"Fail"},{"id":"bad","name":"Bad"},{"id":"launch","name":"Launch"}]}' ;;
     list)
         if [ "$page" = 2 ]; then
             printf '{"messages":[{"id":"same","unread":true}],"page":2,"hasNext":false}\n'
@@ -69,15 +69,29 @@ ShellRoot {
             if (++test.ticks > 400) { test.check(false, "timeout phase " + test.phase); return }
             if (test.phase === 0 && mail.messages.length && !mail.loading) {
                 if (!test.check(!mail.moveMessage("same", "Projects / Exact"), "undiscovered destination")) return
+                if (!test.check(!mail.moveMessageToRole("same", "trash") && !mail.pendingFolderRole && !mail.moving, "discovery never queues mutation")) return
                 mail.loadFolders()
                 test.phase++
             } else if (test.phase === 1 && mail.foldersLoaded) {
                 if (!test.check(!mail.moveMessage("absent", "Projects / Exact") && !mail.moveMessage("same", "unknown")
                     && !mail.moveMessage("same", ""), "validation/default Inbox")) return
-                var guards = ["loading", "reading", "marking", "savingAttachment", "openingAttachment"]
+                var folders = mail.folders
+                if (!test.check(!mail.moveMessageToRole("same", "trash") && !!mail.foldersError, "missing Trash fails closed")) return
+                mail.folders = [{id: "a", name: "Archive"}, {id: "b", name: "Archives"},
+                    {id: "t", name: "Trash"}, {id: "t2", name: "Deleted items"}]
+                if (!test.check(!mail.moveMessageToRole("same", "archive") && !mail.moveMessageToRole("same", "trash")
+                    && mail.foldersError.indexOf("More than one") >= 0, "ambiguous fallback roles fail closed")) return
+                mail.folders = [{id: "a", name: "Archive"}, {id: "exact", name: "Localized", role: "archive"},
+                    {id: "t", name: "Deleted messages"}]
+                if (!test.check(mail.resolveFolderRole("archive").id === "exact" && mail.resolveFolderRole("trash").id === "t", "role priority/name fallback")) return
+                mail.folders = mail.folders.concat([{id: "other", name: "Other", role: "archive"}])
+                if (!test.check(!mail.moveMessageToRole("same", "archive"), "ambiguous explicit roles")) return
+                mail.folders = folders
+                if (!test.check(!mail.moveMessageToRole("absent", "archive") && !mail.moveMessageToRole("same", "inbox"), "target/role validation")) return
+                var guards = ["loading", "reading", "marking", "deleting", "moving", "savingAttachment", "openingAttachment"]
                 for (var i = 0; i < guards.length; ++i) {
                     mail[guards[i]] = true
-                    if (!test.check(!mail.moveMessage("same", "Projects / Exact"), guards[i] + " guard")) return
+                    if (!test.check(!mail.moveMessage("same", "Projects / Exact") && !mail.moveMessageToRole("same", "archive") && !mail.moveMessageToRole("same", "trash"), guards[i] + " guard")) return
                     mail[guards[i]] = false
                 }
                 mail.ready = false
@@ -87,7 +101,7 @@ ShellRoot {
                 test.phase++
             } else if (test.phase === 2 && mail.message && !mail.reading) {
                 test.requests = mail.listRequest
-                if (!test.check(mail.moveMessage("same", "Projects / Exact") && mail.moving, "accept/latch")) return
+                if (!test.check(mail.moveMessageToRole("same", "archive") && mail.moving, "accept/latch")) return
                 if (!test.check(!mail.moveMessage("same", "fail") && !mail.selectFolder("in") && !mail.selectFolderRole("inbox"), "move/navigation guard")) return
                 mail.refresh(); mail.nextPage(); mail.previousPage(); mail.setRead("other", true); mail.readMessage("same"); mail.saveAttachment("a", false)
                 if (!test.check(mail.listRequest === test.requests && !mail.marking && !mail.reading && !mail.savingAttachment && mail.selectedId === "other", "operation/timer guards")) return
@@ -106,7 +120,8 @@ ShellRoot {
                 test.phase++
             } else if (test.phase === 6 && !mail.moving) {
                 if (!test.check(test.has("fill") && mail.message.id === "fill" && mail.actionError.indexOf("Invalid move") >= 0, "bad response preserves source")) return
-                mail.moveMessage("fill", "Projects / Exact")
+                mail.folders = mail.folders.map(function(f) { return f.id === "Projects / Exact" ? {id: f.id, name: "Trash", role: "trash"} : f })
+                if (!test.check(mail.moveMessageToRole("fill", "trash") && !mail.deleting, "trash uses move only")) return
                 test.phase++
             } else if (test.phase === 7 && !mail.moving && !mail.loading) {
                 if (!test.check(mail.message === null && mail.selectedId === "", "selected reader cleared")) return
@@ -114,6 +129,12 @@ ShellRoot {
                 test.phase++
             } else if (test.phase === 8 && !mail.loading && test.has("same")) {
                 if (!test.check(!mail.moveMessage("same", "in"), "explicit same folder")) return
+                var folders = mail.folders
+                mail.folders = [{id: "in", name: "Trash", role: "trash"}]
+                if (!test.check(!mail.moveMessageToRole("same", "trash") && !mail.deleting && !mail.moving, "already Trash never deletes")) return
+                mail.folders = [{id: "in", name: "Archive", role: "archive"}]
+                if (!test.check(!mail.moveMessageToRole("same", "archive") && !mail.moving, "already Archive no-op")) return
+                mail.folders = folders
                 mail.moveMessage("same", "Projects / Exact")
                 test.phase++
             } else if (test.phase === 9) {
@@ -167,4 +188,4 @@ grep -q JITSMAIL_MOVES_OK "$work/output"
 ! grep -Eq 'MOVES_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration' "$work/output"
 grep -Fq 'move|offline|Inbox|same|Projects / Exact|1' "$work/calls"
 grep -Fq 'move|offline|in|same|Projects / Exact|1' "$work/calls"
-! grep -Eq '^(mark|save)\|' "$work/calls"
+! grep -Eq '^(delete|mark|save)\|' "$work/calls"

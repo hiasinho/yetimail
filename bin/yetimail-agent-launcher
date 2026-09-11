@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""Launch Omarchy Agent without putting private mail in the desktop launch argv."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+MAX_PROMPT_BYTES = 128 * 1024
+MAX_WIRE_BYTES = 256 * 1024
+PROMPT_PREFIX = "prompt-"
+CONSUME_TIMEOUT_SECONDS = 15
+
+
+class LaunchError(Exception):
+    pass
+
+
+def private_runtime_directory() -> Path:
+    uid = os.getuid()
+    configured = os.environ.get("XDG_RUNTIME_DIR", "")
+    base = Path(configured) if configured else Path(f"/run/user/{uid}")
+    if not base.is_absolute():
+        raise LaunchError("runtime directory unavailable")
+    try:
+        info = base.lstat()
+    except OSError as error:
+        raise LaunchError("runtime directory unavailable") from error
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or info.st_mode & 0o077:
+        raise LaunchError("runtime directory is not private")
+
+    directory = base / "yetimail-agent"
+    try:
+        directory.mkdir(mode=0o700, exist_ok=True)
+        info = directory.lstat()
+    except OSError as error:
+        raise LaunchError("prompt directory unavailable") from error
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or info.st_mode & 0o077:
+        raise LaunchError("prompt directory is not private")
+    return directory
+
+
+def remove_stale_prompts(directory: Path) -> None:
+    cutoff = time.time() - 600
+    try:
+        entries = list(directory.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if not entry.name.startswith(PROMPT_PREFIX):
+            continue
+        try:
+            info = entry.lstat()
+            if info.st_uid == os.getuid() and stat.S_ISREG(info.st_mode) and info.st_mtime < cutoff:
+                entry.unlink()
+        except OSError:
+            pass
+
+
+def configured_agent_is_available() -> bool:
+    selector = shutil.which("omarchy-default-agent")
+    launcher = shutil.which("omarchy-agent")
+    terminal_launcher = shutil.which("omarchy-launch-tui")
+    if not selector or not launcher or not terminal_launcher:
+        return False
+    try:
+        result = subprocess.run(
+            [selector], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, timeout=5, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    agent = result.stdout.strip()
+    return result.returncode == 0 and bool(re.fullmatch(r"[A-Za-z0-9._+-]+", agent)) and shutil.which(agent) is not None
+
+
+def read_stdin_prompt() -> str:
+    wire = sys.stdin.buffer.readline(MAX_WIRE_BYTES + 1)
+    if not wire or len(wire) > MAX_WIRE_BYTES or not wire.endswith(b"\n"):
+        raise LaunchError("invalid prompt input")
+    try:
+        payload = json.loads(wire.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise LaunchError("invalid prompt input") from error
+    prompt = payload.get("prompt") if isinstance(payload, dict) else None
+    if not isinstance(prompt, str) or not prompt or "\x00" in prompt:
+        raise LaunchError("invalid prompt input")
+    return prompt
+
+
+def stage_prompt(prompt: str) -> None:
+    if not configured_agent_is_available():
+        raise LaunchError("default agent unavailable")
+    directory = private_runtime_directory()
+    remove_stale_prompts(directory)
+    data = prompt.encode("utf-8")
+    if len(data) > MAX_PROMPT_BYTES:
+        raise LaunchError("prompt is too large")
+
+    fd, name = tempfile.mkstemp(prefix=PROMPT_PREFIX, dir=directory)
+    path = Path(name)
+    try:
+        os.fchmod(fd, 0o600)
+        output = os.fdopen(fd, "wb")
+        fd = -1  # The file object owns the descriptor from this point onward.
+        with output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        command = [
+            shutil.which("omarchy-launch-tui") or "omarchy-launch-tui",
+            "--app-id=org.omarchy.agent",
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--consume",
+            str(path),
+        ]
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+        deadline = time.monotonic() + CONSUME_TIMEOUT_SECONDS
+        while path.exists() and time.monotonic() < deadline:
+            if process.poll() not in (None, 0):
+                break
+            time.sleep(0.05)
+        if path.exists():
+            raise LaunchError("terminal did not consume prompt")
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+
+def consume_prompt(name: str) -> None:
+    directory = private_runtime_directory()
+    path = Path(name)
+    if path.parent != directory or not path.name.startswith(PROMPT_PREFIX):
+        raise LaunchError("invalid prompt path")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as error:
+        raise LaunchError("prompt unavailable") from error
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_nlink != 1 or info.st_mode & 0o077):
+            raise LaunchError("prompt file is unsafe")
+        chunks = []
+        remaining = MAX_PROMPT_BYTES + 1
+        while remaining:
+            chunk = os.read(fd, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(chunks)
+        if len(data) > MAX_PROMPT_BYTES:
+            raise LaunchError("prompt is too large")
+    finally:
+        os.close(fd)
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    try:
+        prompt = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise LaunchError("prompt is invalid") from error
+    agent_launcher = shutil.which("omarchy-agent")
+    if not agent_launcher:
+        raise LaunchError("agent launcher unavailable")
+    os.execv(agent_launcher, [agent_launcher, "--inline", "--prompt", prompt])
+
+
+def main() -> int:
+    try:
+        if len(sys.argv) == 3 and sys.argv[1] == "--consume":
+            consume_prompt(sys.argv[2])
+        elif len(sys.argv) == 1:
+            stage_prompt(read_stdin_prompt())
+        else:
+            raise LaunchError("invalid arguments")
+    except LaunchError:
+        print("Could not open Ask agent.", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

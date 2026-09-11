@@ -49,14 +49,27 @@ if [ "$operation" = folders ]; then
     exit 0
 fi
 printf '%s account=%s id=%s page=%s seen=%s\n' "$operation" "$account" "$id" "$page" "$seen" >> "$YETIMAIL_CALLS"
+if [ "$operation" = mark ]; then
+    if ! /usr/bin/mkdir "$YETIMAIL_CALLS.mark-lock" 2>/dev/null; then
+        printf 'BAD concurrent mark\n' >> "$YETIMAIL_CALLS"; exit 97
+    fi
+    trap '/usr/bin/rmdir "$YETIMAIL_CALLS.mark-lock"' EXIT
+fi
 /usr/bin/sleep 0.2
 case "$operation" in
     list)
         if [ "$page" = 3 ]; then printf '{"error":"fixture page failure"}\n'; exit 1; fi
+        case "$account" in batch-*)
+            printf '{"hasNext":false,"messages":[{"id":"shared","subject":"%s page 1","unread":true},{"id":"other","unread":true},{"id":"third","unread":true}]}\n' "$account"
+            exit 0 ;;
+        esac
         # Deliberately omit page: legacy helper responses fall back to requestedPage.
         printf '{"account":"%s","hasNext":true,"messages":[{"id":"shared","subject":"%s page %s","unread":true}]}\n' "$account" "$account" "$page" ;;
     read) printf '{"id":"%s","body":"fixture"}\n' "$id" ;;
     mark)
+        if [ "$account" = batch-failure ] && [ "$id" = other ]; then
+            printf '{"error":"fixture batch failure"}\n'; exit 1
+        fi
         if [ "$seen" = false ]; then printf '{"error":"fixture mark failure"}\n'; exit 1; fi
         printf '{"id":"%s","seen":%s}\n' "$id" "$seen" ;;
     *) printf 'BAD OPERATION\n' >> "$YETIMAIL_CALLS"; exit 98 ;;
@@ -72,6 +85,7 @@ ShellRoot {
     property int phase: 0
     property int ticks: 0
     property bool failed: false
+    property bool sawPartialMark: false
     function check(ok, reason) {
         if (!ok) {
             failed = true
@@ -108,6 +122,16 @@ ShellRoot {
         onTriggered: {
             if (test.failed) return
             if (++test.ticks > 400) { test.check(false, "timeout"); return }
+            if (!test.demoMode && (test.phase === 12 || test.phase === 14) && mail.marking) {
+                if (!test.check(mail.messages[0].unread && (mail.pendingMarks === 1
+                    ? !mail.messages[1].unread : mail.messages[1].unread),
+                    "failed/unsent marks changed optimistically")) return
+                if (mail.pendingMarks === 2) {
+                    if (!test.check(!mail.messages[2].unread, "successful head not published before next mark")) return
+                    test.sawPartialMark = true
+                }
+                if (!test.busyGuards()) return
+            }
             if (mail.loading || mail.reading || mail.marking) return
             if (test.demoMode) { demoStep(); return }
             fixtureStep()
@@ -185,6 +209,38 @@ ShellRoot {
                 mail.setRead("shared", true)
                 if (!test.check(!mail.marking && mail.markRequest === request && mail.actionError &&
                                 mail.messages[0].unread, "default account mutation was allowed")) return
+                mail.account = "batch-success"
+                break
+            case 11:
+                if (mail.messages.length !== 3) return
+                var markRequest = mail.markRequest
+                var invalid = [[], ["third", "absent"], ["third", "third"], ["third", 3], ["third", ""]]
+                for (var i = 0; i < invalid.length; i++) {
+                    if (!test.check(!mail.setReadMany(invalid[i], true) && !mail.marking && mail.pendingMarks === 0
+                        && mail.markRequest === markRequest && mail.messages.every(function(m) { return m.unread }),
+                        "mark batch validation must be atomic")) return
+                }
+                test.sawPartialMark = false
+                if (!test.check(mail.setReadMany(["third", "other", "shared"], true) && mail.marking
+                    && mail.pendingMarks === 3 && mail.messages.every(function(m) { return m.unread }),
+                    "mark batch must wait for server success")) return
+                break
+            case 12:
+                if (!test.check(test.sawPartialMark && mail.pendingMarks === 0 && !mail.actionError
+                    && mail.messages.every(function(m) { return !m.unread }), "serial mark batch success")) return
+                mail.account = "batch-failure"
+                break
+            case 13:
+                if (mail.messages.length !== 3) return
+                test.sawPartialMark = false
+                if (!test.check(mail.setReadMany(["third", "other", "shared"], true)
+                    && mail.messages.every(function(m) { return m.unread }), "failure batch starts non-optimistically")) return
+                break
+            case 14:
+                if (!test.check(test.sawPartialMark && mail.pendingMarks === 0 && !mail.markInFlight
+                    && !mail.messages[2].unread && mail.messages[0].unread && mail.messages[1].unread
+                    && mail.actionError === "fixture batch failure Remaining read-status changes were cancelled.",
+                    "failure preserves success and cancels unsent marks")) return
                 test.pass(); return
             }
             test.phase++
@@ -264,6 +320,13 @@ list account=hiasinho id=none page=1 seen=none
 list account=hiasinho id=none page=2 seen=none
 list account=final id=none page=1 seen=none
 list account=default id=none page=1 seen=none
+list account=batch-success id=none page=1 seen=none
+mark account=batch-success id=third page=1 seen=true
+mark account=batch-success id=other page=1 seen=true
+mark account=batch-success id=shared page=1 seen=true
+list account=batch-failure id=none page=1 seen=none
+mark account=batch-failure id=third page=1 seen=true
+mark account=batch-failure id=other page=1 seen=true
 CALLS
         if ! diff -u "$work/expected.calls" "$YETIMAIL_CALLS"; then status=1; fi
     fi

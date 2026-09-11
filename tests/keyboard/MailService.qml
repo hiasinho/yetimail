@@ -38,9 +38,10 @@ Item {
         var matches = folders.filter(function(item) { return item.role === role })
         return matches.length === 1 ? matches[0] : null
     }
-    function moveMessageToRole(id, role) {
+    function moveMessageToRole(id, role) { return moveMessagesToRole([id], role) }
+    function moveMessagesToRole(ids, role) {
         var folder = resolveFolderRole(role)
-        return folder && folder.id !== folderId ? moveMessage(id, folder.id) : false
+        return folder && folder.id !== folderId ? moveMessages(ids, folder.id) : false
     }
     property bool loading: false
     property bool reading: false
@@ -61,11 +62,19 @@ Item {
     property bool movePaused: false
     function retryMoves() { record("retryMoves"); movePaused = false; return true }
     function cancelPendingMoves() { record("cancelMoves"); pendingMoves = 0; movePaused = false; return true }
-    function moveMessage(id, destination) {
-        record("move", id, destination)
-        fixtures = fixtures.filter(function(row) { return row.id !== id })
-        messages = messages.filter(function(row) { return row.id !== id })
-        if (selectedId === id) { selectedId = ""; message = null }
+    function validIds(ids) {
+        return Array.isArray(ids) && ids.length > 0 && ids.every(function(id, index) {
+            return typeof id === "string" && ids.indexOf(id) === index
+                && messages.some(function(row) { return row.id === id })
+        })
+    }
+    function moveMessage(id, destination) { return moveMessages([id], destination) }
+    function moveMessages(ids, destination) {
+        if (!validIds(ids)) return false
+        ids.forEach(function(id) { record("move", id, destination) })
+        fixtures = fixtures.filter(function(row) { return ids.indexOf(row.id) < 0 })
+        messages = messages.filter(function(row) { return ids.indexOf(row.id) < 0 })
+        if (ids.indexOf(selectedId) >= 0) { selectedId = ""; message = null }
         return true
     }
     property bool savingAttachment: false
@@ -124,13 +133,16 @@ Item {
         message = null
         messages = fixtures.slice(0, 50)
     }
-    function setRead(id, seen) {
-        record("mark", id, seen)
+    function setRead(id, seen) { return setReadMany([id], seen) }
+    function setReadMany(ids, seen) {
+        if (!validIds(ids)) return false
+        ids.forEach(function(id) { record("mark", id, seen) })
         fixtures = fixtures.map(function(row) {
-            if (row.id !== id) return row
+            if (ids.indexOf(row.id) < 0) return row
             return {id: row.id, from: row.from, to: row.to, subject: row.subject, date: row.date, unread: !seen}
         })
         messages = fixtures.slice((page - 1) * 50, page * 50)
+        return true
     }
     onAccountChanged: { folderId = ""; folderName = "Inbox"; foldersError = ""; populate() }
     Component.onCompleted: populate()

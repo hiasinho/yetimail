@@ -5,11 +5,12 @@ A keyboard-first Omarchy mail panel powered by **Himalaya 2.1**. Read and manage
 - Mail bar widget and two-pane inbox/reader.
 - Folder messages in pages of 50, newest first; mouse or Vim-like keyboard navigation.
 - Keyboard folder picker and Inbox / Sent / Archive / Trash shortcuts.
-- `Shift+M` moves one message to a chosen folder; lowercase `m` still marks read.
+- Page-local multi-selection supports bulk move, archive, trash, and read/unread actions.
 - Optional account selector restricted to an explicit allowlist; only the selected account is queried.
 - Unread badge counts **only the current page**, not the whole mailbox.
 - Automatic refresh every 120 seconds, plus Refresh / Ctrl+R.
 - Safe text-only message display with compact numbered web links and destination previews.
+- Explicit **Ask agent** action opens the configured Omarchy agent with bounded email context.
 - Keyboard-accessible attachment details, safe saving, and explicit opening of supported types.
 - Explicit mark-read / mark-unread actions. Opening or prefetching a message does **not** mark it seen.
 - Private, bounded SQLite body cache with debounced prefetching for faster opens.
@@ -34,7 +35,7 @@ himalaya --account personal --json envelope list --page-size 5
 
 Use the default account or select an account through plugin settings. Yetimail starts at the account's default inbox alias; the folder picker discovers that account's selectable mailboxes. Keep passwords in your password manager/keyring, not plugin settings or this repository. Authentication must work without an interactive prompt; the helper has closed stdin and a 30-second timeout.
 
-Gmail/OAuth, compose/reply, bulk operations, search, and full offline sync are outside this milestone.
+Gmail/OAuth, compose/reply, cross-page bulk operations, search, and full offline sync are outside this milestone.
 
 ## Install the local checkout
 
@@ -77,6 +78,7 @@ All commands work inside the panel, including while the selectable message text 
 | Key | Action |
 | --- | --- |
 | `j` / `k`, `↓` / `↑` | Select next/previous message in list; scroll in reader |
+| `Space` / `Ctrl+A` | Toggle the highlighted message / select the current page |
 | `Enter`, `l`, `→` | Open the highlighted message and focus reader |
 | `h`, `←` | Return from links to reader, or reader to list |
 | `x` / `Shift+X` | Immediately archive / move to Trash; no-op already in the destination |
@@ -97,11 +99,11 @@ All commands work inside the panel, including while the selectable message text 
 | `m` / `u` | Mark target message read/unread |
 | `r`, `Ctrl+r` | Refresh current page |
 | `?` | Toggle shortcut help |
-| `Esc` | Dismiss help, return from links to reader to list, then close panel |
+| `Esc` | Dismiss help, return from links to reader, clear selection, then close panel |
 | `q` | Close panel |
 | `Ctrl+c` | Copy selected message text |
 
-Status changes target the highlighted row in list mode, or the open message in reader mode. Only explicit `m`/`u` commands or their buttons change read status. Real status changes require an explicitly selected account (not an unnamed default); the `hiash,hiasinho` allowlist supplies this. Actions wait for server success before updating the badge; failures leave the old status intact. No automatic marking when opening or navigating.
+Status changes target the selected rows when the list has a selection, otherwise the highlighted row; reader actions always target only the open message. `Space` or Ctrl-click toggles a row, and `Ctrl+A` selects the current page. Selected rows use an accent background and left edge instead of checkboxes. Selection stays page-local, is cleared by account/folder/page changes or closing the panel, and never marks mail by itself. Only explicit `m`/`u` commands or their buttons change read status. Real status changes require an explicitly selected account (not an unnamed default); the `hiash,hiasinho` allowlist supplies this. Actions run serially and wait for each server success before updating the badge; a failure cancels the remaining unsubmitted status changes and leaves them unchanged. No automatic marking when opening or navigating.
 
 Older/newer navigation preserves the current page on failure. Yetimail explicitly requests descending date order instead of relying on backend defaults. A full page enables Older; an exact multiple of 50 can therefore have a final empty page. IMAP pages can shift as new mail arrives. Account switching returns to page 1.
 
@@ -111,19 +113,27 @@ Press `f` or click the folder icon beside the account tabs to open the compact d
 
 Changing folders resets to page 1 and clears the old reader; changing accounts returns to Inbox. All message reads, status changes, and attachment saves are scoped to the selected mailbox, even when two folders contain the same message ID. Before explicit-folder operations, the helper reads Himalaya's configuration to verify that a folder ID is not redirected by a mailbox alias. Conflicting aliases or configurations it cannot safely interpret are rejected rather than accessing a different folder; credentials are never logged. Folder navigation itself never moves, archives, deletes, or marks a message read. Use `x` to archive; there is no `e` binding.
 
-Press `Shift+M` to move the highlighted message (or the displayed message in reader mode). The destination picker uses discovered folders; `j/k` selects, `Enter` moves, and `h/Esc` cancels without changes. Moves to the same folder are rejected, including when the configured Inbox alias resolves to that destination. Moving does not navigate to the destination or explicitly change read flags. Accepted moves immediately hide their source rows and advance selection, then run through Himalaya one at a time. The footer shows the pending count, and the page refreshes once after the queue drains. Both source and destination receive alias-routing checks. Moving to Trash is a folder move, not permanent deletion. There is no bulk move or undo yet.
+Press `Shift+M` to move the selected messages, the highlighted message when nothing is selected, or the displayed message in reader mode. The destination picker uses discovered folders; `j/k` selects, `Enter` moves, and `h/Esc` cancels without changes. Moves to the same folder are rejected, including when the configured Inbox alias resolves to that destination. Moving does not navigate to the destination or explicitly change read flags. A batch is validated as a whole before accepted rows are hidden, then runs through Himalaya one message at a time. The footer shows the pending count, and the page refreshes once after the queue drains. Both source and destination receive alias-routing checks. Moving to Trash is a folder move, not permanent deletion. There is no cross-page bulk move or undo yet.
 
-Press `x` to archive or `Shift+X` to trash the highlighted row in list mode or the displayed message in reader mode, immediately without confirmation. These actions use the same safe folder-move queue as the picker, never `message delete`; `Shift+X` is a no-op in Trash, and `x` is a no-op in Archive. Missing or ambiguous roles fail closed. If discovery is not ready, the action loads folders and asks you to retry; it never guesses a destination. Actions are blocked while busy, closed, or in help, folder picker, or deletion confirmation. Real moves require an explicit account.
+Press `x` to archive or `Shift+X` to trash the selected rows (or the highlighted row when nothing is selected) in list mode, or the displayed message in reader mode, immediately without confirmation. These actions use the same safe folder-move queue as the picker, never `message delete`; `Shift+X` is a no-op in Trash, and `x` is a no-op in Archive. Missing or ambiguous roles fail closed. If discovery is not ready, the action loads folders and asks you to retry; it never guesses a destination. Actions are blocked while busy, closed, or in help, folder picker, or deletion confirmation. Real moves require an explicit account.
 
 If a queued move fails, its row is restored and the remaining queue pauses. **Retry** submits that move again; **Cancel** restores unsent rows and reconciles with the server, but cannot undo a move already accepted by the server. Reading and list navigation remain available while moves run. Account, folder, and page changes stay disabled until the queue drains or is cancelled. Closing the panel does not cancel accepted moves; direct account/configuration changes discard unsent entries and reject stale results.
 
 ## Deleting one message
 
-Press `Delete` for the highlighted row in list mode or the displayed message in reader mode. The reader toolbar's **Delete** button always targets its displayed message. Outside the uniquely resolved Trash folder, both immediately move to Trash without confirmation, just like `Shift+X`. Inside that Trash folder, they **ask for confirmation of permanent removal**, showing a snapshot of the account, folder, message ID, and subject. Only `Enter` or the modal's Delete button confirms; `h`, `Esc`, or Cancel dismisses without changes. Other panel shortcuts and background controls are disabled during confirmation. Closing, navigating, or changing message/account/config state invalidates the prompt; repeated submission is guarded. Real deletion requires an explicit account.
+Press `Delete` for the selected rows (or highlighted row when nothing is selected) in list mode or the displayed message in reader mode. The reader toolbar's **Delete** button always targets its displayed message. Outside the uniquely resolved Trash folder, this immediately moves the targets to Trash without confirmation, just like `Shift+X`. Inside Trash, permanent removal remains one message at a time: multiple selected rows are rejected, while a single target **asks for confirmation**, showing a snapshot of the account, folder, message ID, and subject. Only `Enter` or the modal's Delete button confirms; `h`, `Esc`, or Cancel dismisses without changes. Other panel shortcuts and background controls are disabled during confirmation. Closing, navigating, or changing message/account/config state invalidates the prompt; repeated submission is guarded. Real deletion requires an explicit account.
 
 Himalaya 2.1's `message delete` follows its **trash-first policy**: it moves to the configured Trash, or requests permanent removal when already in Trash. On IMAP without UIDPLUS, a message may instead be flagged `Deleted` pending expunge; success does **not** guarantee permanent removal. An unresolved or ambiguous Trash blocks the action, not permission to bypass Trash. Role discovery uses the rules above; Himalaya's configured Trash policy remains authoritative for confirmed removal, so a differing configuration may move rather than permanently remove the message. Yetimail never expunges or performs bulk deletion.
 
 After success, the source row is removed locally, selection advances to the next row (previous at the end), a matching reader is cleared, and the page is refreshed. The server's refreshed state remains authoritative, including messages pending expunge. Errors preserve the row and reader. Explicit source folders receive the same literal mailbox/alias-routing guard as other operations. Demo deletion never accesses config or Himalaya; refreshing restores synthetic messages. There is no undo in Yetimail.
+
+## Ask agent
+
+The reader toolbar's **Ask agent** button performs the equivalent of `omarchy agent prompt` in a terminal with the displayed message's sender, recipients, date, subject, and up to 12,000 characters of its plain-text body. It does not include full headers or attachment payloads. The prompt asks the agent to summarize first and treats the JSON-encoded email as private, untrusted data that must not authorize commands, links, attachments, sending, disclosure, or account access.
+
+This is an explicit export of mail content to your configured AI agent and provider. Review that provider's privacy policy before using it. Prompt isolation is a defense, not a guarantee: mail may contain prompt-injection attempts, and Omarchy starts its default agent with that agent's unattended permission mode. Use **Ask agent** only for messages you are comfortable sharing, and review proposed actions before allowing them. The button is disabled in demo mode and while the message is unavailable or the UI is busy.
+
+Yetimail sends the prompt to its launcher over stdin so private mail is not included in the desktop launch command logged by UWSM. The launcher briefly stages it in an owner-only file under `$XDG_RUNTIME_DIR`, passes only that private path through the terminal launcher, and unlinks the file before starting `omarchy-agent`. Commands use argument arrays without shell interpolation. The final agent process necessarily receives the prompt and may expose it to other processes running as your user while that session runs.
 
 ## Reading links
 

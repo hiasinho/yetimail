@@ -28,11 +28,15 @@ ColumnLayout {
     required property var selectedLink
     required property int attachmentIndex
     required property var selectedAttachment
+    required property bool agentEnabled
+    required property bool agentLaunching
+    required property string agentStatus
     signal headersRequested()
     signal attachmentsRequested()
     signal linksRequested()
     signal markRequested(bool seen)
     signal deleteRequested()
+    signal askAgentRequested()
     signal closeRequested()
     signal attachmentSelected(int index)
     signal linkSelected(int index)
@@ -88,6 +92,7 @@ ColumnLayout {
         MailButton { iconText: view.icons.link; tooltipText: "Show links (o)"; selected: view.showLinks; enabled: !!view.message && !view.busy; onClicked: view.linksRequested() }
         MailButton { objectName: "readerMarkRead"; iconText: view.icons.read; tooltipText: "Mark this message read (m)"; enabled: !!view.message && !!view.displayedEnvelope && view.displayedEnvelope.unread && !view.busy; onClicked: view.markRequested(true) }
         MailButton { objectName: "readerMarkUnread"; iconText: view.icons.unread; tooltipText: "Mark this message unread (u)"; enabled: !!view.message && !!view.displayedEnvelope && !view.displayedEnvelope.unread && !view.busy; onClicked: view.markRequested(false) }
+        MailButton { objectName: "readerAskAgent"; text: view.agentLaunching ? "Opening…" : "Ask agent"; iconText: view.agentLaunching ? "" : view.icons.agent; tooltipText: view.agentEnabled ? "Discuss this email with your configured AI agent · sends sender, recipients, date, subject, and body" : "Ask agent is available for loaded, non-demo messages"; enabled: view.agentEnabled; onClicked: view.askAgentRequested() }
         MailButton { objectName: "readerDelete"; iconText: view.icons.delete; tooltipText: "Trash this message (Delete) · in Trash, confirm removal"; enabled: !!view.message && !!view.displayedEnvelope && !view.busy; onClicked: view.deleteRequested() }
         MailButton { iconText: view.icons.close; tooltipText: "Close (q)"; onClicked: view.closeRequested() }
     }
@@ -100,6 +105,14 @@ ColumnLayout {
         maximumLineCount: 4
         elide: Text.ElideRight
         color: Color.accent
+    }
+    MailLabel {
+        Layout.fillWidth: true
+        visible: view.agentLaunching || view.agentStatus !== ""
+        text: view.agentLaunching ? "Opening Ask agent…" : view.agentStatus
+        color: view.agentStatus.indexOf("Could not") === 0 ? Color.accent : Color.foreground
+        opacity: view.agentStatus.indexOf("Could not") === 0 ? 1 : 0.6
+        wrapMode: Text.Wrap
     }
     ColumnLayout {
         visible: !!view.message && !view.reading && !view.readError && !view.showHeaders

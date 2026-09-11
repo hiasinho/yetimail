@@ -176,8 +176,33 @@ ShellRoot {
                 test.phase++
             } else if (test.phase === 22 && !mail.movePending && !mail.loading) {
                 if (!test.check(mail.page === 1 && mail.messages.length === 2, "empty final page falls back")) return
-                mail.account = "launch-offline"
+                mail.account = "batch-offline"
+                test.phase = 30
+            } else if (test.phase === 30 && mail.messages.length === 3 && !mail.loading) {
+                mail.loadFolders()
                 test.phase++
+            } else if (test.phase === 31 && mail.foldersLoaded) {
+                var invalid = [[], ["same", "absent"], ["same", "same"], ["same", 3], ["same", ""]]
+                for (var i = 0; i < invalid.length; i++) {
+                    if (!test.check(!mail.moveMessages(invalid[i], "archive") && mail.pendingMoves === 0
+                        && mail.messages.map(function(m) { return m.id }).join(",") === "same,other,third",
+                        "batch validation must not hide or enqueue a valid prefix")) return
+                }
+                if (!test.check(!mail.moveMessages(["same", "other"], "unknown") && mail.pendingMoves === 0
+                    && mail.messages.length === 3, "batch destination validation is atomic")) return
+                test.listRequests = mail.listRequest
+                if (!test.check(mail.moveMessages(["third", "same"], "archive") && mail.pendingMoves === 2
+                    && mail.messages.map(function(m) { return m.id }).join(",") === "other", "batch optimistic projection")) return
+                if (!test.check(!mail.moveMessages(["other", "same"], "trash") && mail.pendingMoves === 2
+                    && test.has("other"), "queued duplicate rejects entire appended batch")) return
+                if (!test.check(mail.moveMessages(["other"], "trash") && mail.pendingMoves === 3
+                    && !mail.messages.length, "batch append accepted")) return
+                test.phase++
+            } else if (test.phase === 32 && !mail.movePending && !mail.loading) {
+                if (!test.check(!mail.messages.length && !mail.actionError && mail.listRequest === test.listRequests + 1,
+                    "batch drains with one reconciliation")) return
+                mail.account = "launch-offline"
+                test.phase = 23
             } else if (test.phase === 23 && mail.messages.length === 3 && !mail.loading) {
                 mail.loadFolders()
                 test.phase++
@@ -210,3 +235,9 @@ grep -Fq 'move|failure-offline|Inbox|same|archive|1' "$work/calls"
 ! grep -Fq 'move|cancel-offline|Inbox|other|archive|1' "$work/calls"
 ! grep -Fq 'move|stale-offline|Inbox|other|archive|1' "$work/calls"
 ! grep -Eq '^(delete|mark|save)\|' "$work/calls"
+# Supplied order (not envelope order), followed by the appended batch; no rejected prefix launches.
+printf '%s\n' 'move|batch-offline|Inbox|third|archive|1' 'move|batch-offline|Inbox|same|archive|1' \
+    'move|batch-offline|Inbox|other|trash|1' > "$work/expected-batch"
+grep '^move|batch-offline|' "$work/calls" > "$work/actual-batch"
+diff -u "$work/expected-batch" "$work/actual-batch"
+[ "$(grep -c '^list|batch-offline|' "$work/calls")" -eq 2 ]

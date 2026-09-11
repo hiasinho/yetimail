@@ -55,7 +55,9 @@ ShellRoot {
                 mail.loading = false; mail.reading = false; mail.marking = false; mail.moving = false; mail.savingAttachment = false; mail.openingAttachment = false
                 mail.folderId = ""; mail.folderName = "Inbox"; mail.foldersLoading = false; mail.foldersError = ""
                 widget.showFolders = false
+                widget.clearSelection()
                 widget.cursorId = ""
+                mail.actionError = ""
                 mail.populate(); mail.calls = []
                 widget.opened = true
                 widget.showHelp = false
@@ -314,13 +316,70 @@ ShellRoot {
                 cancel.clicked()
                 equal(mail.calls[mail.calls.length - 1].operation, "cancelMoves")
             }
+            function test_bulk_selection_and_actions() {
+                equal(widget.cursorId, "alpha/1")
+                press(Qt.Key_Space)
+                equal(widget.selectedCount, 1, "Space selects cursor without opening")
+                equal(mail.calls.length, 0)
+                press(Qt.Key_J); press(Qt.Key_Space)
+                equal(widget.selectedCount, 2, "navigation preserves selection")
+                press(Qt.Key_M)
+                var marks = mail.calls.filter(function(call) { return call.operation === "mark" })
+                equal(marks.length, 2, "mark applies to selected rows")
+                equal(marks[0].id, "alpha/1"); equal(marks[1].id, "alpha/2")
+                equal(widget.selectedCount, 2, "marking preserves selection")
+                press(Qt.Key_Escape)
+                equal(widget.selectedCount, 0, "Escape clears selection first")
+                check(widget.opened)
+                press(Qt.Key_A, Qt.ControlModifier)
+                equal(widget.selectedCount, 50, "Ctrl+A selects only current page")
+                press(Qt.Key_N)
+                equal(mail.page, 2)
+                equal(widget.selectedCount, 0, "page change clears selection")
+                equal(mail.messages.length, 13)
+                press(Qt.Key_P)
+                widget.cursorId = "alpha/1"
+                press(Qt.Key_Space); press(Qt.Key_J); press(Qt.Key_J); press(Qt.Key_Space)
+                press(Qt.Key_X)
+                var moves = mail.calls.filter(function(call) { return call.operation === "move" })
+                equal(moves.length, 2, "archive applies to selected rows")
+                equal(moves[0].id, "alpha/1"); equal(moves[1].id, "alpha/3")
+                equal(moves[0].seen, "Archive"); equal(moves[1].seen, "Archive")
+                equal(widget.selectedCount, 0, "accepted bulk move clears selection")
+                equal(widget.cursorId, "alpha/4", "cursor advances to surviving row")
+            }
+            function test_selection_mouse_reader_and_permanent_delete_safety() {
+                var rowMouse = find(widget, function(item) { return item.objectName === "messageRowMouseArea" })
+                check(rowMouse !== null, "message row found")
+                mouseClick(rowMouse, rowMouse.width / 2, rowMouse.height / 2, Qt.LeftButton, Qt.ControlModifier); wait(30)
+                equal(widget.selectedCount, 1, "Ctrl-click selects without opening")
+                equal(mail.selectedId, "")
+                press(Qt.Key_J); press(Qt.Key_Return)
+                equal(mail.selectedId, "alpha/2")
+                widget.focusList()
+                var readerDelete = find(widget, function(item) { return item.objectName === "readerDelete" })
+                readerDelete.clicked(); wait(30)
+                equal(mail.calls[mail.calls.length - 1].id, "alpha/2", "reader toolbar ignores retained list selection")
+                equal(widget.selectedCount, 1)
+                widget.focusList()
+                mail.folderId = "Trash"; mail.folderName = "Trash"
+                equal(widget.selectedCount, 0, "folder change clears selection")
+                widget.cursorId = "alpha/1"
+                press(Qt.Key_Space); press(Qt.Key_J); press(Qt.Key_Space)
+                equal(widget.selectedCount, 2)
+                var before = mail.calls.length
+                press(Qt.Key_Delete)
+                equal(mail.calls.length, before, "multiple Trash selections never delete")
+                check(!widget.confirmingDelete)
+                check(mail.actionError.indexOf("one message at a time") >= 0)
+            }
             function test_move_picker() {
                 mail.folderId = "INBOX"
                 widget.syncCursor()
                 press(Qt.Key_J)
                 press(Qt.Key_M, Qt.ShiftModifier)
                 check(widget.showFolders && widget.movePicker, "Shift+M opens move picker")
-                equal(widget.moveTargetId, "alpha/2")
+                compare(widget.moveTargetIds, ["alpha/2"])
                 equal(mail.calls.length, 1, "opening picker only discovers folders")
                 press(Qt.Key_Return)
                 equal(mail.calls.length, 1, "current folder cannot be a destination")
@@ -343,7 +402,7 @@ ShellRoot {
                 press(Qt.Key_Return)
                 widget.cursorId = "alpha/4"
                 press(Qt.Key_M, Qt.ShiftModifier)
-                equal(widget.moveTargetId, "alpha/3", "reader targets displayed message not cursor")
+                compare(widget.moveTargetIds, ["alpha/3"], "reader targets displayed message not cursor")
                 press(Qt.Key_G, Qt.ShiftModifier); press(Qt.Key_Return)
                 equal(mail.calls[mail.calls.length - 1].id, "alpha/3")
                 equal(mail.calls[mail.calls.length - 1].seen, "Projects/2026")
@@ -660,6 +719,37 @@ ShellRoot {
                 equal(mail.calls[2].id, "alpha/1")
                 equal(mail.calls[2].seen, false)
             }
+            function test_ask_agent_prompt() {
+                var button = find(widget, function(item) { return item.objectName === "readerAskAgent" })
+                check(button !== null, "Ask agent button found")
+                press(Qt.Key_Return)
+                check(!button.enabled, "demo mail cannot be sent to an agent")
+                equal(widget.askAgent(), false, "demo guard blocks direct launch")
+
+                var prompts = []
+                var originalLauncher = widget.launchAgentPrompt
+                widget.launchAgentPrompt = function(prompt) { prompts.push(prompt) }
+                mail.demo = false
+                wait(30)
+                check(button.enabled, "loaded real message enables Ask agent")
+                button.clicked(); wait(30)
+                equal(prompts.length, 1, "one explicit click launches once")
+                check(prompts[0].indexOf("private, untrusted email content") >= 0, "prompt includes safety boundary")
+                check(prompts[0].indexOf("Long fixture") >= 0, "prompt includes displayed subject")
+                check(prompts[0].indexOf("Long offline message line 0") >= 0, "prompt includes displayed plain-text body")
+                check(prompts[0].indexOf("execute commands") >= 0 && prompts[0].indexOf("open links or attachments") >= 0,
+                    "prompt forbids acting on email instructions")
+                var command = widget.agentCommand()
+                equal(command.length, 2, "agent launch uses a fixed argument array")
+                equal(command[0], "python3")
+                check(command[1].indexOf("yetimail-agent-launcher") >= 0, "private launcher receives the prompt over stdin")
+                check(command.join(" ").indexOf("Long fixture") < 0, "email content is absent from desktop launch arguments")
+                var oversized = widget.buildAgentPrompt({from: "A", to: "B", date: "D", subject: "S", body: "x".repeat(13000)})
+                check(oversized.indexOf("[Truncated by Yetimail]") >= 0, "oversized bodies are bounded and marked")
+
+                widget.launchAgentPrompt = originalLauncher
+                mail.demo = true
+            }
             function test_busy_guards() {
                 var flags = ["loading", "reading", "marking"]
                 for (var i = 0; i < flags.length; i++) {
@@ -719,7 +809,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 21)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 24)
                     console.log("YETIMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

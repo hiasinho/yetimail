@@ -186,7 +186,11 @@ Item {
     }
     property int page: 1
     property bool hasNext: false
+    // marking stays latched across the whole serial batch, including deferred launches.
     property bool marking: false
+    property bool markInFlight: false
+    property var markQueue: []
+    readonly property int pendingMarks: markQueue.length
     property bool deleting: false
     property int deleteGeneration: 0
     property int deleteRequest: 0
@@ -303,11 +307,13 @@ Item {
     function resetMessages() {
         invalidatePrefetch()
         generation++
-        // Direct account/config/folder changes invalidate unsent queued moves.
+        // Direct account/config/folder changes invalidate unsent queued mutations.
         // An already-started helper is allowed to finish, but its result is stale.
         moveQueue = []
         moveSequence = []
         movePaused = false
+        markQueue = []
+        if (!markInFlight) marking = false
         messages = []
         message = null
         selectedId = ""
@@ -352,26 +358,70 @@ Item {
         listProcess.running = true
     }
 
-    function setRead(id, seen) {
-        if (!ready || !active || loading || reading || deleting || movePending || marking) return
+    function setRead(id, seen) { return setReadMany([String(id)], seen) }
+
+    // Validate the whole batch before accepting anything. Flags change only
+    // after each successful response; failure stops unsent work, without
+    // rolling back successes or changing failed/unsent rows.
+    function setReadMany(ids, seen) {
+        if (!ready || !active || loading || reading || deleting || movePending || marking
+            || savingAttachment || openingAttachment) return false
         actionError = ""
         if (!account.trim() && !demo) {
             actionError = "Select an explicit account before changing read status."
-            return
+            return false
         }
-        markId = String(id)
-        if (!messages.some(function(m) { return m.id === markId })) {
-            actionError = "Message is not on the current page."
-            return
+        if (!validMessageIds(ids)) {
+            actionError = "Messages must be unique IDs on the current page."
+            return false
         }
-        markSeen = !!seen
-        markGeneration = generation
+        var pending = ids.filter(function(id) {
+            var envelope = root.messages.find(function(message) { return message.id === id })
+            return envelope && envelope.unread !== !seen
+        })
+        if (!pending.length) return true
+        invalidatePrefetch()
+        markQueue = pending.map(function(id) { return {id: id, seen: !!seen, generation: root.generation} })
         marking = true
+        startNextMark()
+        return true
+    }
+
+    function validMessageIds(ids) {
+        return Array.isArray(ids) && ids.length > 0 && ids.every(function(id, index) {
+            return typeof id === "string" && !!id.trim() && ids.indexOf(id) === index
+                && root.messages.some(function(m) { return m.id === id })
+        })
+    }
+
+    function startNextMark() {
+        if (markInFlight || !markQueue.length) return
+        var entry = markQueue[0]
+        if (!active || entry.generation !== generation) {
+            markQueue = []
+            marking = false
+            Qt.callLater(refresh)
+            return
+        }
+        markId = entry.id
+        markSeen = entry.seen
+        markGeneration = entry.generation
+        markInFlight = true
         markRequest++
         var args = command("mark")
         if (!account && demo) args.push("--account", "Demo")
         markProcess.command = args.concat(["--id", markId, markSeen ? "--seen" : "--unseen"])
         markProcess.running = true
+    }
+
+    function stopMarks(error) {
+        var stale = markGeneration !== generation
+        var remaining = markQueue.length
+        markInFlight = false
+        markQueue = []
+        marking = false
+        if (stale) Qt.callLater(refresh)
+        else actionError = error + (remaining > 1 ? " Remaining read-status changes were cancelled." : "")
     }
 
     function deleteCurrent() {
@@ -405,12 +455,14 @@ Item {
     }
 
     // Archive/trash shortcuts are moves only, including when already in Trash.
-    function moveMessageToRole(id, role) {
+    function moveMessageToRole(id, role) { return moveMessagesToRole([id], role) }
+
+    function moveMessagesToRole(ids, role) {
         if (!ready || !active || loading || reading || marking || deleting || movePaused || savingAttachment || openingAttachment
             || ["archive", "trash"].indexOf(role) < 0) return false
         var folder = resolveFolderRole(role)
         if (!folder || folder.id === folderId) return false
-        return moveMessage(id, folder.id)
+        return moveMessages(ids, folder.id)
     }
 
     function moveCurrent(entry) {
@@ -513,16 +565,19 @@ Item {
 
     // Only discovered, exact destination IDs are accepted. The helper resolves
     // the empty source's configured Inbox alias for same-folder validation.
-    function moveMessage(id, destination) {
+    function moveMessage(id, destination) { return moveMessages([id], destination) }
+
+    // Atomic acceptance (not a server transaction): validate every ID before
+    // hiding rows or appending entries to the existing serial move queue.
+    function moveMessages(ids, destination) {
         if (!ready || !active || loading || reading || marking || deleting || movePaused || savingAttachment || openingAttachment) return false
         actionError = ""
         if (!account.trim() && !demo) {
             actionError = "Select an explicit account before moving messages."
             return false
         }
-        var index = messages.findIndex(function(m) { return m.id === id })
-        if (typeof id !== "string" || !id || index < 0 || moveQueue.some(function(entry) { return entry.id === id })) {
-            actionError = "Message is not on the current page."
+        if (!validMessageIds(ids) || moveQueue.some(function(entry) { return ids.indexOf(entry.id) >= 0 })) {
+            actionError = "Messages must be unique IDs on the current page."
             return false
         }
         var folder = folders.find(function(f) { return f.id === destination })
@@ -536,12 +591,24 @@ Item {
         }
         invalidatePrefetch()
         if (!moveQueue.length) moveSequence = messages.map(function(message) { return message.id })
-        var entry = {
-            generation: generation, account: account, config: config, folder: folderId, page: page,
-            id: id, destination: destination, envelope: messages[index], order: moveSequence.indexOf(id)
+        var entries = ids.map(function(id) {
+            return {
+                generation: root.generation, account: root.account, config: root.config, folder: root.folderId, page: root.page,
+                id: id, destination: destination, envelope: root.messages.find(function(m) { return m.id === id }),
+                order: root.moveSequence.indexOf(id)
+            }
+        })
+        moveQueue = moveQueue.concat(entries)
+        messages = messages.filter(function(message) {
+            return ids.indexOf(String(message.id)) < 0
+        })
+        if (ids.indexOf(selectedId) >= 0) {
+            selectedId = ""
+            message = null
+            readError = ""
+            attachmentStatus = ""
+            cancelAttachmentOpen()
         }
-        moveQueue = moveQueue.concat([entry])
-        hideMoveEntry(entry)
         Qt.callLater(startNextMove)
         return true
     }
@@ -895,15 +962,12 @@ Item {
             if (running) return
             var request = root.markRequest
             Qt.callLater(function() {
-                if (request !== root.markRequest || !root.marking || markProcess.running) return
-                root.marking = false
-                if (root.markGeneration !== root.generation) Qt.callLater(root.refresh)
-                else root.actionError = "Could not launch Python 3. Check that python3 is installed and on PATH."
+                if (request !== root.markRequest || !root.markInFlight || markProcess.running) return
+                root.stopMarks("Could not launch Python 3. Check that python3 is installed and on PATH.")
             })
         }
         onExited: function(code, status) {
-            root.marking = false
-            if (root.markGeneration !== root.generation) { Qt.callLater(root.refresh); return }
+            if (root.markGeneration !== root.generation) { root.stopMarks(""); return }
             try {
                 var data = root.result(markOutput.text, code)
                 if (data.id !== root.markId || data.seen !== root.markSeen)
@@ -915,7 +979,11 @@ Item {
                     return updated
                 })
                 if (root.demo) root.demoSeen[root.markId] = root.markSeen
-            } catch (e) { root.actionError = e.message }
+                root.markInFlight = false
+                root.markQueue = root.markQueue.slice(1)
+                if (root.markQueue.length) Qt.callLater(root.startNextMark)
+                else root.marking = false
+            } catch (e) { root.stopMarks(e.message) }
         }
     }
 }

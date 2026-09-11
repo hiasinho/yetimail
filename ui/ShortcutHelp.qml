@@ -40,6 +40,8 @@ Rectangle {
                 model: [
                     ["j k / ↓ ↑", "Move / scroll"],
                     ["Enter / l / →", "Open message / link"],
+                    ["Space", "Toggle message selection (list)"],
+                    ["Ctrl+a", "Select current page (list)"],
                     ["h / ←", "Back to body / list"],
                     ["Tab", "Switch list / reader"],
                     ["gg / G", "First / last"],
@@ -53,14 +55,14 @@ Rectangle {
                     ["v", "Full selectable headers"],
                     ["a", "Attachments: j/k select"],
                     ["s / Enter", "Save / open attachment (in a)"],
-                    ["M", "Move message to folder"],
-                    ["x / Shift+X", "Archive / trash · immediately"],
+                    ["M", "Move selection / message to folder"],
+                    ["x / Shift+X", "Archive / trash selection or message"],
                     ["Delete", "Trash · in Trash, confirm removal"],
-                    ["m / u", "Mark read / unread"],
+                    ["m / u", "Mark selection / message read / unread"],
                     ["r", "Refresh folder"],
                     ["Ctrl+c", "Copy selected text"],
                     ["?", "Toggle shortcuts"],
-                    ["Esc", "Dismiss / back / close"],
+                    ["Esc", "Dismiss / clear selection / back / close"],
                     ["q", "Close mail"]
                 ]
                 RowLayout {

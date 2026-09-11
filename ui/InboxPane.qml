@@ -28,12 +28,22 @@ ColumnLayout {
     required property var accounts
     required property string currentAccount
     required property string cursorId
+    required property var selectedIds
+    required property int selectedCount
     required property bool showHelp
     signal refreshRequested()
     signal foldersRequested()
     signal accountRequested(string name)
     signal listFocused()
     signal messageRequested(string messageId)
+    signal toggleSelectionRequested(string messageId)
+    signal selectAllRequested()
+    signal clearSelectionRequested()
+    signal bulkReadRequested()
+    signal bulkUnreadRequested()
+    signal bulkArchiveRequested()
+    signal bulkTrashRequested()
+    signal bulkMoveRequested()
     signal previousRequested()
     signal nextRequested()
     signal helpRequested()
@@ -41,7 +51,7 @@ ColumnLayout {
     signal cancelMovesRequested()
     readonly property point folderAnchor: Qt.point(accountFlow.x + folderButton.x, accountFlow.y + folderButton.y + folderButton.height + 2)
     readonly property real desiredListHeight: Math.max(90, Math.min(7, messages.length) * 68)
-    readonly property real preferredContentHeight: headerRow.implicitHeight + accountFlow.implicitHeight + desiredListHeight + footerRow.implicitHeight + spacing * 3
+    readonly property real preferredContentHeight: headerRow.implicitHeight + accountFlow.implicitHeight + selectionFlow.implicitHeight + desiredListHeight + footerRow.implicitHeight + spacing * 4
     readonly property real listHeight: inbox.height
     readonly property Item focusTarget: inbox
     function focusList() { inbox.forceActiveFocus() }
@@ -64,7 +74,7 @@ ColumnLayout {
     function footerStatus() {
         var queued = view.pendingMoves + (view.pendingMoves === 1 ? " message" : " messages")
         var status = view.deleting ? "Deleting…" : view.movePaused ? "Move failed · " + queued + " pending" : view.pendingMoves ? "Moving " + queued + "…" : view.marking ? "Updating…" : view.loading ? "Refreshing…" : view.listError ? "Refresh failed · stale" : view.messages.length + (view.messages.length === 1 ? " message" : " messages")
-        return status + " · Page " + view.page
+        return (view.selectedCount ? view.selectedCount + " selected · " : "") + status + " · Page " + view.page
     }
 
     Layout.fillHeight: true
@@ -109,6 +119,19 @@ ColumnLayout {
             }
         }
     }
+    Flow {
+        id: selectionFlow
+        objectName: "inboxSelectionControls"
+        Layout.fillWidth: true
+        spacing: 6
+        MailButton { objectName: "selectAllMessagesButton"; text: "Select page"; tooltipText: "Select all messages on this page (Ctrl+A)"; enabled: view.messages.length > 0 && !view.busy; onClicked: view.selectAllRequested() }
+        MailButton { objectName: "bulkReadButton"; text: "Read"; tooltipText: "Mark selected messages read (m)"; visible: view.selectedCount > 0; enabled: !view.busy; onClicked: view.bulkReadRequested() }
+        MailButton { objectName: "bulkUnreadButton"; text: "Unread"; tooltipText: "Mark selected messages unread (u)"; visible: view.selectedCount > 0; enabled: !view.busy; onClicked: view.bulkUnreadRequested() }
+        MailButton { objectName: "bulkArchiveButton"; text: "Archive"; tooltipText: "Archive selected messages (x)"; visible: view.selectedCount > 0; enabled: !view.busy; onClicked: view.bulkArchiveRequested() }
+        MailButton { objectName: "bulkTrashButton"; text: "Trash"; tooltipText: "Move selected messages to Trash (Shift+X)"; visible: view.selectedCount > 0; enabled: !view.busy; onClicked: view.bulkTrashRequested() }
+        MailButton { objectName: "bulkMoveButton"; text: "Move"; tooltipText: "Move selected messages to a folder (Shift+M)"; visible: view.selectedCount > 0; enabled: !view.busy; onClicked: view.bulkMoveRequested() }
+        MailButton { objectName: "clearSelectionButton"; text: "Clear"; tooltipText: "Clear message selection (Esc)"; visible: view.selectedCount > 0; enabled: !view.busy; onClicked: view.clearSelectionRequested() }
+    }
     ListView {
         id: inbox
         onActiveFocusChanged: if (activeFocus) view.listFocused()
@@ -120,11 +143,23 @@ ColumnLayout {
         model: view.messages
         ScrollBar.vertical: ScrollBar {}
         delegate: Rectangle {
+            id: messageRow
+            objectName: "messageRow"
             required property var modelData
+            readonly property bool selected: !!view.selectedIds && view.selectedIds.indexOf(String(modelData.id)) !== -1
+            readonly property bool cursor: modelData.id === view.cursorId
             width: inbox.width
             height: 66
             radius: 0
-            color: modelData.id === view.cursorId ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.14) : mouse.containsMouse ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.07) : "transparent"
+            color: selected ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.26) : cursor ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.14) : mouse.containsMouse ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.07) : "transparent"
+            border.width: cursor ? 1 : 0
+            border.color: Color.accent
+            Rectangle {
+                width: 3
+                height: parent.height
+                color: Color.accent
+                visible: messageRow.selected
+            }
             MailLabel {
                 x: 7; y: 9
                 text: view.icons.unread
@@ -150,10 +185,16 @@ ColumnLayout {
             }
             MouseArea {
                 id: mouse
+                objectName: "messageRowMouseArea"
                 anchors.fill: parent
                 hoverEnabled: true
                 enabled: !view.busy
-                onClicked: { view.messageRequested(modelData.id) }
+                onClicked: function(event) {
+                    if (event.modifiers & Qt.ControlModifier)
+                        view.toggleSelectionRequested(String(modelData.id))
+                    else
+                        view.messageRequested(modelData.id)
+                }
             }
         }
         MailLabel {

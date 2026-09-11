@@ -3,7 +3,7 @@
 Typical use::
 
     cache = MessageCache()
-    key = CacheKey(context_identity, mailbox, message_id, parser_version)
+    key = CacheKey(context_identity, mailbox, message_id, parser_version, fingerprint)
     result = cache.get(key)
     if result.hit:
         return result.value
@@ -19,9 +19,10 @@ bypass this module entirely.
 A miss caused by storage failure has generation=None, disabling the subsequent
 put. All mutations return success booleans; callers must continue without cache
 on failure. Invalidation failures must not be treated as successful invalidation.
-Generation tokens are persistent, random database epochs: invalidate/clear reject
-ALL older in-flight puts, conservatively including unrelated keys. Existing
-unrelated entries survive targeted invalidation. Capture the token BEFORE fetching.
+Generation tokens combine a global epoch with persistent scoped epochs.
+Invalidation rejects affected in-flight puts only; clear rejects all old puts.
+Capture the token BEFORE fetching. Scoped epochs must not be pruned: even a
+cache miss may have a fetch in flight.
 
 Limits count UTF-8 JSON payload bytes, not SQLite page/index/WAL overhead. Expiry
 is measured from put (not last access). Maintenance runs on get/put; there is no
@@ -51,9 +52,10 @@ class CacheKey:
     mailbox: str
     message_id: str
     parser_version: str
+    fingerprint: str = ""
 
     def parts(self):
-        parts = (self.context, self.mailbox, self.message_id, self.parser_version)
+        parts = (self.context, self.mailbox, self.message_id, self.parser_version, self.fingerprint)
         if not all(isinstance(part, str) for part in parts):
             raise ValueError("Cache key components must be strings")
         return parts
@@ -130,17 +132,28 @@ class MessageCache:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("BEGIN IMMEDIATE")
+            # A failed invalidation may have disabled the cache while this
+            # connection was waiting for the write lock.
+            if not allow_disabled and disabled.exists():
+                raise OSError("Cache disabled after failed invalidation")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise ValueError("Unsupported cache schema")
+            if version == 1:
+                # Old keys combine ID and listing nonce. They cannot be reused.
+                connection.execute("DROP TABLE IF EXISTS messages")
+                connection.execute("DROP TABLE IF EXISTS state")
             connection.execute("CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK(id=1), generation TEXT NOT NULL)")
             connection.execute("INSERT OR IGNORE INTO state VALUES (1, ?)", (uuid.uuid4().hex,))
             connection.execute("""CREATE TABLE IF NOT EXISTS messages (
                 context TEXT NOT NULL, mailbox TEXT NOT NULL, message_id TEXT NOT NULL,
-                parser_version TEXT NOT NULL, value TEXT NOT NULL, size INTEGER NOT NULL,
+                parser_version TEXT NOT NULL, fingerprint TEXT NOT NULL,
+                value TEXT NOT NULL, size INTEGER NOT NULL,
                 created REAL NOT NULL, accessed INTEGER NOT NULL,
-                PRIMARY KEY (context, mailbox, message_id, parser_version))""")
-            connection.execute("PRAGMA user_version=1")
+                PRIMARY KEY (context, mailbox, message_id, parser_version, fingerprint))""")
+            connection.execute("""CREATE TABLE IF NOT EXISTS epochs (
+                scope TEXT PRIMARY KEY, generation TEXT NOT NULL)""")
+            connection.execute("PRAGMA user_version=2")
             yield connection
             connection.commit()
         except BaseException:
@@ -157,8 +170,16 @@ class MessageCache:
                     pass
 
     @staticmethod
-    def _generation(connection):
-        return connection.execute("SELECT generation FROM state WHERE id=1").fetchone()[0]
+    def _generation(connection, key):
+        scopes = [(key.context, None, None), (key.context, key.mailbox, None),
+                  (key.context, None, key.message_id),
+                  (key.context, key.mailbox, key.message_id)]
+        tokens = [connection.execute("SELECT generation FROM state WHERE id=1").fetchone()[0]]
+        for scope in scopes:
+            row = connection.execute("SELECT generation FROM epochs WHERE scope=?",
+                                     (json.dumps(scope),)).fetchone()
+            tokens.append(row[0] if row else "")
+        return json.dumps(tokens)
 
     @staticmethod
     def _tick(connection):
@@ -180,9 +201,9 @@ class MessageCache:
             parts = key.parts()
             with self._connect() as connection:
                 self._prune(connection, self.clock())
-                generation = self._generation(connection)
+                generation = self._generation(connection, key)
                 row = connection.execute("""SELECT value FROM messages WHERE
-                    context=? AND mailbox=? AND message_id=? AND parser_version=?""", parts).fetchone()
+                    context=? AND mailbox=? AND message_id=? AND parser_version=? AND fingerprint=?""", parts).fetchone()
                 if row is None:
                     result = CacheLookup(generation=generation)
                 else:
@@ -190,11 +211,11 @@ class MessageCache:
                         value = json.loads(row[0])
                     except (ValueError, TypeError, RecursionError):
                         connection.execute("""DELETE FROM messages WHERE
-                            context=? AND mailbox=? AND message_id=? AND parser_version=?""", parts)
+                            context=? AND mailbox=? AND message_id=? AND parser_version=? AND fingerprint=?""", parts)
                         result = CacheLookup(generation=generation)
                     else:
                         connection.execute("""UPDATE messages SET accessed=? WHERE
-                            context=? AND mailbox=? AND message_id=? AND parser_version=?""",
+                            context=? AND mailbox=? AND message_id=? AND parser_version=? AND fingerprint=?""",
                                            (self._tick(connection), *parts))
                         result = CacheLookup(True, value, generation)
             return result
@@ -212,11 +233,11 @@ class MessageCache:
             if size > min(self.max_entry_bytes, self.max_bytes):
                 return False
             with self._connect() as connection:
-                if generation != self._generation(connection):
+                if generation != self._generation(connection, key):
                     return False
                 now = self.clock()
                 connection.execute("""INSERT OR REPLACE INTO messages VALUES
-                    (?, ?, ?, ?, ?, ?, ?, ?)""", (*parts, payload, size, now, self._tick(connection)))
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?)""", (*parts, payload, size, now, self._tick(connection)))
                 self._prune(connection, now)
             return True
         except _FAILURES:
@@ -225,10 +246,11 @@ class MessageCache:
     def invalidate(self, context, mailbox=None, message_id=None):
         """Remove a context, mailbox, or message across ALL parser versions.
 
-        A message_id requires mailbox; None is a wildcard, never an empty string.
-        Also advances the epoch even if there were no matching stored entries.
+        None is a wildcard, never an empty string. A message without a mailbox
+        invalidates that raw ID across aliases/mailboxes in the context.
+        Advances its scoped epoch even when no matching entry exists.
         """
-        if not isinstance(context, str) or (message_id is not None and mailbox is None):
+        if not isinstance(context, str):
             return False
         if any(value is not None and not isinstance(value, str) for value in (mailbox, message_id)):
             return False
@@ -237,7 +259,11 @@ class MessageCache:
             if value is not None:
                 clauses.append(column + "=?")
                 values.append(value)
-        return self._remove("DELETE FROM messages WHERE " + " AND ".join(clauses), values)
+        success = self._remove("DELETE FROM messages WHERE " + " AND ".join(clauses),
+                               values, scope=(context, mailbox, message_id))
+        if not success:
+            self.disable()
+        return success
 
     def disable(self):
         """Fail closed after an invalidation could not acquire SQLite."""
@@ -263,10 +289,15 @@ class MessageCache:
         except OSError:
             return False
 
-    def _remove(self, statement, values, *, allow_disabled=False):
+    def _remove(self, statement, values, *, allow_disabled=False, scope=None):
         try:
             with self._connect(allow_disabled=allow_disabled) as connection:
-                connection.execute("UPDATE state SET generation=? WHERE id=1", (uuid.uuid4().hex,))
+                if scope is None:
+                    connection.execute("UPDATE state SET generation=? WHERE id=1", (uuid.uuid4().hex,))
+                    connection.execute("DELETE FROM epochs")
+                else:
+                    connection.execute("INSERT OR REPLACE INTO epochs VALUES (?, ?)",
+                                       (json.dumps(scope), uuid.uuid4().hex))
                 connection.execute(statement, values)
             return True
         except _FAILURES:

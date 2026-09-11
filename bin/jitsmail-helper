@@ -8,7 +8,6 @@ import os
 import re
 import subprocess
 import sys
-import uuid
 from email import policy
 from email.parser import BytesParser
 from html.parser import HTMLParser
@@ -273,9 +272,8 @@ def message_cache(args, require_identity=True):
 
 
 def cache_key(context, args, mailbox=None):
-    identity = args.id + "\0" + args.cache_identity
     return CacheKey(context, args.mailbox if mailbox is None else mailbox,
-                    identity, MESSAGE_PARSER_VERSION)
+                    args.id, MESSAGE_PARSER_VERSION, args.cache_identity)
 
 
 def read_message(args):
@@ -299,14 +297,15 @@ def read_message(args):
     return result
 
 
-def invalidate_message(args, *mailboxes):
+def invalidate_message(args):
     cache, context = message_cache(args, require_identity=False)
     if cache:
-        # Aliases (notably configured/default Inbox) can name the same backend
-        # mailbox differently, so invalidate the whole account/config context.
-        # If SQLite is locked, leave a marker that makes all future hits fail
-        # closed until an explicit cache clear succeeds.
-        if not cache.invalidate(context):
+        # Alias resolution is backend-dependent. Invalidate this raw ID across
+        # all mailbox spellings, fingerprints and parser versions, but retain
+        # unrelated messages (including their in-flight prefetch writes).
+        # Destination IDs are backend-assigned; refreshed envelope fingerprints
+        # distinguish changed destination identities.
+        if not cache.invalidate(context, message_id=args.id):
             cache.disable()
 
 
@@ -335,6 +334,28 @@ def list_folders(args):
     return {"folders": folders}
 
 
+def envelope_fingerprint(envelope):
+    """Versioned best-effort identity, not an IMAP UIDVALIDITY guarantee.
+
+    Sparse envelopes must bypass persistent caching. Flags are mutable and do
+    not identify content. Keep the wire token a SHA-256 for existing QML clients.
+    """
+    if not all(isinstance(envelope.get(key), str) and envelope[key].strip()
+               for key in ("id", "date")):
+        return ""
+    if not isinstance(envelope.get("subject"), str):
+        return ""
+    senders = envelope.get("from")
+    if not isinstance(senders, list) or not senders or not all(
+            isinstance(sender, dict) and isinstance(sender.get("email"), str)
+            and sender["email"].strip() for sender in senders):
+        return ""
+    source = {key: value for key, value in envelope.items() if key != "flags"}
+    return hashlib.sha256(b"jitsmail-envelope-v1\0" + json.dumps(
+        source, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
+
+
 def list_messages(args):
     raw = run_himalaya(args, ["--json", "envelope", "list", "--page-size", str(PAGE_SIZE),
                               "--page", str(args.page)] + mailbox_args(args))
@@ -343,10 +364,6 @@ def list_messages(args):
         if not isinstance(envelopes, list):
             raise ValueError()
         messages = []
-        # Cross-backend Himalaya output has no durable mailbox generation such
-        # as IMAP UIDVALIDITY. Scope cache identities to this authoritative
-        # listing so reused IDs can never hit an older persistent entry.
-        listing_nonce = uuid.uuid4().hex
         for envelope in envelopes:
             if not isinstance(envelope["id"], str):
                 raise ValueError()
@@ -359,10 +376,7 @@ def list_messages(args):
             seen = any(flag.get("iana") == "seen" or
                        flag.get("raw", "").lower().lstrip("\\$") == "seen"
                        for flag in envelope.get("flags", []))
-            identity_source = {key: value for key, value in envelope.items() if key != "flags"}
-            identity = hashlib.sha256(listing_nonce.encode("ascii") + json.dumps(
-                identity_source, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")).hexdigest()
+            identity = envelope_fingerprint(envelope)
             messages.append({
                 "id": envelope["id"], "subject": envelope.get("subject") or "",
                 "from": ", ".join(senders), "date": envelope.get("date") or "",
@@ -436,7 +450,7 @@ def mark_message(args):
 def delete_message(args):
     # Himalaya owns Trash resolution and trash-first policy. Never expunge.
     run_himalaya(args, ["message", "delete", *mailbox_args(args), "--", args.id])
-    invalidate_message(args, args.mailbox)
+    invalidate_message(args)
     return {"id": args.id}
 
 
@@ -444,7 +458,7 @@ def move_message(args):
     source = ["--from=" + args.mailbox] if args.mailbox else []
     run_himalaya(args, ["message", "move", *source, "--to=" + args.destination,
                        "--", args.id])
-    invalidate_message(args, args.mailbox, args.destination)
+    invalidate_message(args)
     return {"id": args.id, "destination": args.destination}
 
 

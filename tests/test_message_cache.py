@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sqlite3
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -53,9 +54,20 @@ class MessageCacheTest(unittest.TestCase):
                 self.assertTrue(result.hit)
                 self.assertEqual(result.value, value)
 
+    def test_persistence_in_fresh_python_process(self):
+        self.put(value="restart fixture")
+        code = ("import sys; from message_cache import CacheKey, MessageCache; "
+                "result = MessageCache(sys.argv[1], clock=lambda: 10000000).get("
+                "CacheKey('account/config/backend-identity', 'Inbox', '42', '1')); "
+                "assert result.hit and result.value == 'restart fixture'")
+        result = subprocess.run([sys.executable, "-c", code, str(self.directory)],
+                                cwd=Path(__file__).resolve().parents[1] / "bin",
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_key_separates_every_component_and_opaque_strings(self):
         self.put(value="original")
-        for field in ("context", "mailbox", "message_id", "parser_version"):
+        for field in ("context", "mailbox", "message_id", "parser_version", "fingerprint"):
             key = replace(self.key, **{field: getattr(self.key, field) + "'\x00/日本"})
             self.assertFalse(self.cache.get(key).hit)
             self.put(key, field)
@@ -143,7 +155,7 @@ class MessageCacheTest(unittest.TestCase):
         self.assertTrue(self.cache.invalidate(self.key.context, self.key.mailbox))
         self.assertFalse(self.cache.get(self.key).hit)
         self.assertFalse(self.cache.get(second).hit)
-        self.assertFalse(self.cache.invalidate(self.key.context, message_id="42"))
+        self.assertTrue(self.cache.invalidate(self.key.context, message_id="42"))
 
     def test_invalidation_rejects_inflight_put_from_other_connection_even_on_miss(self):
         pending = self.cache.get(self.key)
@@ -152,6 +164,53 @@ class MessageCacheTest(unittest.TestCase):
         self.assertFalse(self.cache.put(self.key, "stale", generation=pending.generation))
         self.assertFalse(self.cache.get(self.key).hit)
         self.put(value="fresh")
+
+    def test_scoped_races_preserve_unrelated_puts_and_cross_fingerprints(self):
+        variants = [self.key, replace(self.key, fingerprint="changed"),
+                    replace(self.key, parser_version="2"), replace(self.key, mailbox="alias")]
+        unrelated = [replace(self.key, message_id="B"), replace(self.key, message_id="C"),
+                     replace(self.key, context="other")]
+        tokens = [(key, self.cache.get(key).generation) for key in variants + unrelated]
+        other = MessageCache(self.directory, clock=lambda: self.now)
+        self.assertTrue(other.invalidate(self.key.context, message_id=self.key.message_id))
+        for key, token in tokens:
+            self.assertEqual(self.cache.put(key, "late", generation=token), key in unrelated)
+        for key in variants:
+            self.put(key, "fresh")
+        tokens = [(key, self.cache.get(key).generation) for key in unrelated]
+        self.assertTrue(other.invalidate(self.key.context, self.key.mailbox))
+        for key, token in tokens:
+            self.assertEqual(self.cache.put(key, "late", generation=token), key.context == "other")
+
+    def test_v1_migration_discards_legacy_keys_and_rotates_global_generation(self):
+        self.directory.mkdir()
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("CREATE TABLE state (id INTEGER PRIMARY KEY, generation TEXT)")
+            connection.execute("INSERT INTO state VALUES (1, 'old-token')")
+            connection.execute("CREATE TABLE messages (message_id TEXT)")
+            connection.execute("INSERT INTO messages VALUES ('42' || char(0) || 'nonce')")
+            connection.execute("PRAGMA user_version=1")
+        result = self.cache.get(self.key)
+        self.assertFalse(result.hit)
+        self.assertIsNotNone(result.generation)
+        self.assertFalse(self.cache.put(self.key, "stale", generation="old-token"))
+        self.put(value="new schema")
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(connection.execute("SELECT message_id, fingerprint FROM messages").fetchall(), [("42", "")])
+
+    def test_failed_invalidation_disables_hits_and_pending_puts_until_clear(self):
+        self.put(value="old")
+        token = self.cache.get(self.key).generation
+        self.cache.timeout = 0.01
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self.assertFalse(self.cache.invalidate(self.key.context, message_id="42"))
+        self.assertFalse(self.cache.get(self.key).hit)
+        self.assertFalse(self.cache.put(self.key, "late", generation=token))
+        self.assertTrue(self.cache.clear())
+        self.assertFalse(self.cache.put(self.key, "late", generation=token))
+        self.put(value="recovered")
 
     def test_clear_rejects_inflight_put_and_removes_all_contexts(self):
         self.put(value="first")

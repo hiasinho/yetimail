@@ -100,6 +100,78 @@ class HelperTest(unittest.TestCase):
             self.assertEqual(self.invoke(*args)[0], 0)
             self.assertEqual(run.call_count, 3)
 
+    def test_read_without_adequate_identity_always_fetches(self):
+        self.cache_enabled = True
+        self.addCleanup(lambda: setattr(self, "cache_enabled", False))
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.toml"
+            config.write_text('[accounts.work]\ndefault = true\n')
+            with patch.dict(os.environ, {"XDG_CACHE_HOME": directory}), patch("subprocess.run", return_value=
+                    subprocess.CompletedProcess([], 0, b"Subject: Sparse\n\nbody", b"")) as run:
+                for _ in range(2):
+                    self.assertEqual(self.invoke("read", "--config", str(config), "--id", "42")[0], 0)
+                self.assertEqual(run.call_count, 2)
+                self.assertFalse((Path(directory) / "jitsmail").exists())
+
+    def test_stable_fingerprint_excludes_flags_and_rejects_sparse_envelopes(self):
+        envelope = {"id": "A", "subject": "Hello", "date": "2026-01-15T10:30:00Z",
+                    "from": [{"email": "a@example.test"}]}
+        fingerprint = helper["envelope_fingerprint"]
+        original = fingerprint(envelope)
+        self.assertRegex(original, r"^[0-9a-f]{64}$")
+        restarted = runpy.run_path(str(HELPER))["envelope_fingerprint"]
+        self.assertEqual(restarted(dict(reversed(list(envelope.items())))), original)
+        self.assertEqual(fingerprint(dict(envelope, flags=[{"iana": "seen"}])), original)
+        for field, value in (("subject", "Changed"), ("date", "2026-02-01"),
+                             ("from", [{"email": "b@example.test"}]), ("id", "B")):
+            self.assertNotEqual(fingerprint(dict(envelope, **{field: value})), original)
+        for field in envelope:
+            sparse = dict(envelope)
+            del sparse[field]
+            self.assertEqual(fingerprint(sparse), "")
+
+    def test_delete_and_archive_preserve_b_c_across_refresh_and_restart(self):
+        self.cache_enabled = True
+        self.addCleanup(lambda: setattr(self, "cache_enabled", False))
+        for operation in ("delete", "move"):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as directory:
+                config = Path(directory) / "config.toml"
+                config.write_text('[accounts.work]\ndefault = true\n[accounts.work.imap]\n'
+                                  '[accounts.work.mailbox.alias]\ninbox = "INBOX"\n')
+                base = ("--account", "work", "--config", str(config))
+                envelopes = [{"id": key, "subject": key, "date": "2026-01-15",
+                              "from": [{"email": "a@example.test"}]} for key in "ABC"]
+                calls = []
+                def backend(argv, **kwargs):
+                    calls.append(argv)
+                    data = (json.dumps({"envelopes": envelopes}).encode() if "envelope" in argv
+                            else b"Subject: Fixture\n\nbody")
+                    return subprocess.CompletedProcess(argv, 0, data, b"")
+                with patch.dict(os.environ, {"XDG_CACHE_HOME": directory}), patch("subprocess.run", side_effect=backend):
+                    listed = self.invoke("list", *base)[1]["messages"]
+                    def read(message, mailbox=""):
+                        return self.invoke("read", *base, "--id", message["id"],
+                                           "--mailbox=" + mailbox, "--cache-identity", message["cacheIdentity"])
+                    for message in listed:
+                        self.assertEqual(read(message)[0], 0)
+                    self.assertEqual(read(listed[0], "INBOX")[0], 0)
+                    options = ("--destination", "Archive") if operation == "move" else ()
+                    self.assertEqual(self.invoke(operation, *base, "--id", "A", *options)[0], 0)
+                    refreshed = self.invoke("list", *base)[1]["messages"]
+                    count = len(calls)
+                    for message in refreshed[1:]:
+                        self.assertEqual(read(message)[0], 0)
+                    self.assertEqual(len(calls), count)
+                    self.assertEqual(read(refreshed[0])[0], 0)
+                    self.assertEqual(read(refreshed[0], "INBOX")[0], 0)
+                    self.assertEqual(len(calls), count + 2)
+                    envelopes[1]["subject"] = "Replacement identity"
+                    changed = self.invoke("list", *base)[1]["messages"][1]
+                    self.assertNotEqual(changed["cacheIdentity"], refreshed[1]["cacheIdentity"])
+                    count = len(calls)
+                    self.assertEqual(read(changed)[0], 0)
+                    self.assertEqual(len(calls), count + 1)
+
     def test_demo_folder_discovery_and_navigation_are_offline(self):
         with patch("subprocess.run", side_effect=AssertionError("must remain offline")):
             status, result = self.invoke("folders", "--demo")
@@ -133,7 +205,7 @@ class HelperTest(unittest.TestCase):
             "date": "2026-01-15T10:30:00Z", "unread": False,
         })
         second = dict(result["messages"][1])
-        self.assertRegex(second.pop("cacheIdentity"), r"^[0-9a-f]{64}$")
+        self.assertEqual(second.pop("cacheIdentity"), "")
         self.assertEqual(second, {
             "id": "43", "subject": "", "from": "", "date": "", "unread": True,
         })

@@ -103,7 +103,7 @@ All commands work inside the panel, including while the selectable message text 
 
 Status changes target the highlighted row in list mode, or the open message in reader mode. Only explicit `m`/`u` commands or their buttons change read status. Real status changes require an explicitly selected account (not an unnamed default); the `hiash,hiasinho` allowlist supplies this. Actions wait for server success before updating the badge; failures leave the old status intact. No automatic marking when opening or navigating.
 
-Older/newer navigation preserves the current page on failure. A full page enables Older; an exact multiple of 50 can therefore have a final empty page. IMAP pages can shift as new mail arrives. Account switching returns to page 1.
+Older/newer navigation preserves the current page on failure. Yetimail explicitly requests descending date order instead of relying on backend defaults. A full page enables Older; an exact multiple of 50 can therefore have a final empty page. IMAP pages can shift as new mail arrives. Account switching returns to page 1.
 
 ## Folders
 

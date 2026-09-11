@@ -225,7 +225,8 @@ class HelperTest(unittest.TestCase):
         })
         self.assertEqual([m["unread"] for m in result["messages"]], [False, True, False, True])
         self.assertEqual(run.call_args.args[0], [
-            "himalaya", "--json", "envelope", "list", "--page-size", "50", "--page", "1"])
+            "himalaya", "--json", "envelope", "search", "--page-size", "50", "--page", "1",
+            "order", "by", "date", "desc"])
         self.assertEqual(result["page"], 1)
         self.assertFalse(result["hasNext"])
         self.assertEqual(run.call_args.kwargs["timeout"], 30)
@@ -243,7 +244,8 @@ class HelperTest(unittest.TestCase):
                 self.assertEqual(result["hasNext"], count == 50)
                 self.assertEqual(len(result["messages"]), count)
                 self.assertEqual(run.call_args.args[0], ["himalaya", "--account=work",
-                    "--json", "envelope", "list", "--page-size", "50", "--page", "3"])
+                    "--json", "envelope", "search", "--page-size", "50", "--page", "3",
+                    "order", "by", "date", "desc"])
 
     def test_mark_commands_require_explicit_account_and_keep_id_literal(self):
         for flag, operation, seen in (("--seen", "add", True), ("--unseen", "remove", False)):

@@ -361,8 +361,9 @@ def envelope_fingerprint(envelope):
 
 
 def list_messages(args):
-    raw = run_himalaya(args, ["--json", "envelope", "list", "--page-size", str(PAGE_SIZE),
-                              "--page", str(args.page)] + mailbox_args(args))
+    raw = run_himalaya(args, ["--json", "envelope", "search", "--page-size", str(PAGE_SIZE),
+                              "--page", str(args.page)] + mailbox_args(args) +
+                       ["order", "by", "date", "desc"])
     try:
         envelopes = json.loads(raw)["envelopes"]
         if not isinstance(envelopes, list):

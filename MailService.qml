@@ -22,6 +22,34 @@ Item {
     property int discoveryGeneration: 0
     property string pendingFolderRole: ""
     property bool foldersReload: false
+    // Successful discovery is retained per effective configuration/account for
+    // this process. Cache entries include an explicit loaded bit so a valid
+    // empty result remains distinct from a context that was never discovered.
+    property var folderCache: ({})
+
+    function folderCacheKey() {
+        return JSON.stringify([String(config), String(account), !!demo])
+    }
+
+    function restoreFolderCache(clearCache) {
+        if (clearCache) folderCache = ({})
+        var entry = folderCache[folderCacheKey()]
+        if (entry && entry.loaded && Array.isArray(entry.folders)) {
+            folders = entry.folders.slice()
+            foldersLoaded = true
+        } else {
+            folders = []
+            foldersLoaded = false
+        }
+    }
+
+    function cacheFolders(discovered) {
+        var next = ({})
+        Object.keys(folderCache).forEach(function(key) { next[key] = folderCache[key] })
+        next[folderCacheKey()] = {loaded: true, folders: discovered.slice()}
+        folderCache = next
+    }
+
     function loadFolders() {
         if (!ready || !active) return
         if (foldersLoading) {
@@ -100,7 +128,7 @@ Item {
     function resolveFolderRole(role) {
         foldersError = ""
         if (["inbox", "sent", "archive", "trash"].indexOf(role) < 0) return null
-        if (!foldersLoaded || foldersLoading) {
+        if (!foldersLoaded) {
             loadFolders()
             foldersError = "Loading folders. Retry the action when discovery finishes."
             return null
@@ -332,10 +360,9 @@ Item {
         return args
     }
 
-    function reset() {
+    function reset(clearFolderCache) {
         discoveryGeneration++
-        folders = []
-        foldersLoaded = false
+        restoreFolderCache(!!clearFolderCache)
         foldersError = ""
         foldersReload = false
         pendingFolderRole = ""
@@ -801,14 +828,14 @@ Item {
         }
     }
 
-    onActiveChanged: reset()
-    onAccountChanged: reset()
+    onActiveChanged: reset(false)
+    onAccountChanged: reset(false)
     onConfigChanged: {
         accountOverviewRequest++
         accountOverview = []
         accountOverviewLoading = false
         accountOverviewError = ""
-        reset()
+        reset(true)
         if (active && accountOverviewEnabled) Qt.callLater(loadAccountOverview)
     }
     onDemoChanged: {
@@ -820,7 +847,7 @@ Item {
         accountLabelsLoading = false
         accountLabelSaving = false
         accountOverviewError = ""
-        reset()
+        reset(true)
         if (active) {
             Qt.callLater(loadAccountLabels)
             if (accountOverviewEnabled) Qt.callLater(loadAccountOverview)
@@ -1005,8 +1032,10 @@ Item {
                 if (!Array.isArray(data.folders) || data.folders.some(function(f) {
                     return !f || typeof f.id !== "string" || !f.id || typeof f.name !== "string" || !f.name
                 })) throw new Error("Invalid folder list from mail helper.")
-                root.folders = root.inboxFirst(data.folders)
+                var discovered = root.inboxFirst(data.folders)
+                root.folders = discovered
                 root.foldersLoaded = true
+                root.cacheFolders(discovered)
                 root.retryPendingFolderRole()
             } catch (e) { root.pendingFolderRole = ""; root.foldersError = e.message }
         }

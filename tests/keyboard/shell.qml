@@ -53,7 +53,7 @@ ShellRoot {
                 widget.selectedAccount = "alpha"
                 widget.cancelDelete(); mail.deleting = false
                 mail.loading = false; mail.reading = false; mail.marking = false; mail.moving = false; mail.savingAttachment = false; mail.openingAttachment = false
-                mail.folderId = ""; mail.folderName = "Inbox"; mail.foldersLoading = false; mail.foldersLoaded = false; mail.foldersError = ""
+                mail.folderId = ""; mail.folderName = "Inbox"; mail.foldersLoading = false; mail.foldersLoaded = false; mail.foldersError = ""; mail.folderCache = ({})
                 widget.showFolders = false
                 widget.showSettings = false
                 mail.accountLabels = ({alpha: "Personal", beta: "Work"})
@@ -600,10 +600,11 @@ ShellRoot {
                     press(Qt.Key_Escape)
                 }
                 press(Qt.Key_F)
+                mail.foldersLoaded = false
                 mail.foldersLoading = true
                 count = mail.calls.length
                 press(Qt.Key_Return); press(Qt.Key_R)
-                equal(mail.calls.length, count, "loading prevents choice and duplicate folder request")
+                equal(mail.calls.length, count, "cold loading prevents choice and duplicate folder request")
                 mail.foldersLoading = false; mail.foldersError = "Offline folder failure"
                 press(Qt.Key_R); equal(mail.foldersError, "")
                 equal(mail.calls[mail.calls.length - 1].operation, "folders", "r retries folder discovery")
@@ -630,6 +631,44 @@ ShellRoot {
                 press(Qt.Key_G); press(Qt.Key_G); equal(widget.folderIndex, 0)
                 mail.folders = folders
                 press(Qt.Key_Q); check(!widget.showFolders && !widget.opened)
+            }
+            function test_folder_cache_by_account() {
+                function folderLoads() {
+                    return mail.calls.filter(function(call) { return call.operation === "folders" })
+                }
+                press(Qt.Key_F)
+                equal(folderLoads().length, 1, "first account discovery loads folders")
+                press(Qt.Key_Escape); press(Qt.Key_F)
+                equal(folderLoads().length, 1, "reopening uses current account cache")
+                press(Qt.Key_Escape); press(Qt.Key_BracketRight)
+                equal(widget.currentAccount, "beta")
+                check(!mail.foldersLoaded, "new account starts without cached discovery")
+                press(Qt.Key_F)
+                equal(folderLoads().length, 2, "new account loads its own folders")
+                press(Qt.Key_Escape); press(Qt.Key_BracketLeft)
+                equal(widget.currentAccount, "alpha")
+                check(mail.foldersLoaded, "returning account restores cached discovery")
+                press(Qt.Key_F)
+                equal(folderLoads().length, 2, "restored account does not reload folders")
+                press(Qt.Key_J)
+                var originalFolders = mail.folders.slice()
+                var highlightedId = mail.folders[widget.folderIndex].id
+                mail.folders = mail.folders.slice().reverse()
+                equal(mail.folders[widget.folderIndex].id, highlightedId,
+                    "refresh reorder preserves the highlighted folder by id")
+
+                var status = find(widget, function(item) { return item.objectName === "folderStatus" })
+                mail.foldersLoading = true
+                check(!status.visible, "cached folders hide background refresh state")
+                var count = mail.calls.length
+                press(Qt.Key_Return)
+                equal(mail.calls.length, count + 1, "cached folders remain selectable while refreshing")
+                check(!widget.showFolders)
+                mail.foldersLoading = false
+                mail.folders = originalFolders
+                press(Qt.Key_F); press(Qt.Key_R)
+                equal(folderLoads().length, 3, "r explicitly refreshes the current account cache")
+                press(Qt.Key_Escape)
             }
             function test_navigation() {
                 equal(mail.messages.length, 50)
@@ -913,7 +952,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 26)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 27)
                     console.log("YETIMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

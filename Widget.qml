@@ -58,6 +58,7 @@ BarWidget {
     property int accountIndex: 0
     property bool showFolders: false
     property int folderIndex: 0
+    property string folderCursorId: ""
     property bool movePicker: false
     property var moveTargetIds: []
     property string moveNextId: ""
@@ -286,17 +287,29 @@ BarWidget {
         // named Inbox. The helper resolves that case before any server action.
         return folder.id === mail.folderId
     }
+    function revealFolderCursor() {
+        Qt.callLater(function() {
+            if (root.showFolders && mail.folders.length) folderOverlay.reveal(root.folderIndex)
+        })
+    }
     function syncFolderCursor() {
         var index = mail.folders.findIndex(function(folder) {
             return folder.id === mail.folderId || (!mail.folderId && folder.role === "inbox")
         })
         folderIndex = Math.max(0, index)
-        Qt.callLater(function() {
-            if (root.showFolders && mail.folders.length) folderOverlay.reveal(root.folderIndex)
-        })
+        folderCursorId = mail.folders[folderIndex] ? mail.folders[folderIndex].id : ""
+        revealFolderCursor()
+    }
+    function preserveFolderCursor() {
+        var index = folderCursorId ? mail.folders.findIndex(function(folder) { return folder.id === folderCursorId }) : -1
+        if (showFolders && index >= 0) {
+            folderIndex = index
+            revealFolderCursor()
+        } else syncFolderCursor()
     }
     function moveFolder(delta) {
         folderIndex = Math.max(0, Math.min(mail.folders.length - 1, folderIndex + delta))
+        folderCursorId = mail.folders[folderIndex] ? mail.folders[folderIndex].id : ""
         if (mail.folders.length) folderOverlay.reveal(folderIndex)
     }
     function dismissFolders() {
@@ -307,7 +320,7 @@ BarWidget {
         else sidebar.focusList()
     }
     function chooseFolder() {
-        if (!showFolders || (!movePicker && switchingBlocked) || mail.foldersLoading || !mail.folders[folderIndex]) return
+        if (!showFolders || (!movePicker && switchingBlocked) || (mail.foldersLoading && !mail.foldersLoaded) || !mail.folders[folderIndex]) return
         var folder = mail.folders[folderIndex]
         if (movePicker) {
             if (busy || isCurrentFolder(folder)) return
@@ -584,7 +597,7 @@ BarWidget {
         function onDeletingChanged() { if (mail.deleting) root.cancelDelete(false) }
         function onSavingAttachmentChanged() { if (mail.savingAttachment) root.cancelDelete(false) }
         function onOpeningAttachmentChanged() { if (mail.openingAttachment) root.cancelDelete(false) }
-        function onFoldersChanged() { root.syncFolderCursor() }
+        function onFoldersChanged() { root.preserveFolderCursor() }
         function onFolderIdChanged() { root.cancelDelete(false); root.clearSelection(); root.showAccounts = false; root.showFolders = false; root.movePicker = false; root.moveTargetIds = []; root.moveNextId = ""; root.cursorId = ""; root.pane = "list"; root.showLinks = false; root.showHeaders = false; root.showAttachments = false }
         function onMessageChanged() { root.cancelDelete(false); root.agentStatus = ""; root.showLinks = false; root.showHeaders = false; root.showAttachments = false; root.linkIndex = 0; root.attachmentIndex = 0 }
         function onSelectedIdChanged() { root.cancelDelete(false); if (!mail.selectedId) root.pane = "list" }
@@ -825,11 +838,16 @@ BarWidget {
                 movePicker: root.movePicker
                 currentIndex: root.folderIndex
                 switchingBlocked: root.movePicker ? root.busy : root.switchingBlocked
-                loading: mail.foldersLoading
+                // Cached folders remain usable while an explicit refresh runs.
+                loading: mail.foldersLoading && !mail.foldersLoaded
                 error: mail.foldersError
                 folders: mail.folders
                 icons: root.icons
-                onFolderChosen: function(index) { root.folderIndex = index; root.chooseFolder() }
+                onFolderChosen: function(index) {
+                    root.folderIndex = index
+                    root.folderCursorId = mail.folders[index] ? mail.folders[index].id : ""
+                    root.chooseFolder()
+                }
                 onRetryRequested: mail.loadFolders()
             }
             AccountSettings {

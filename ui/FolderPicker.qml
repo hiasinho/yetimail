@@ -55,6 +55,7 @@ Rectangle {
         }
         MailLabel {
             id: folderStatus
+            objectName: "folderStatus"
             Layout.fillWidth: true
             Layout.margins: 6
             visible: view.loading || !!view.error || !view.folders.length

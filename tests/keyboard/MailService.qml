@@ -6,7 +6,15 @@ Item {
     property string account: ""
     property string config: ""
     property int generation: 0
-    onConfigChanged: { generation++; foldersLoaded = false }
+    property var folderCache: ({})
+    function folderCacheKey() { return JSON.stringify([String(config), String(account), !!demo]) }
+    function restoreFolders(clearCache) {
+        if (clearCache) folderCache = ({})
+        var entry = folderCache[folderCacheKey()]
+        foldersLoaded = !!(entry && entry.loaded)
+        if (foldersLoaded) folders = entry.folders.slice()
+    }
+    onConfigChanged: { generation++; restoreFolders(true) }
     property bool demo: false
     readonly property string accountLabel: account || "Fixture"
     property var accountLabels: ({alpha: "Personal", beta: "Work"})
@@ -49,7 +57,15 @@ Item {
         {id: "Trash", name: "Trash", role: "trash"},
         {id: "Projects/2026", name: "Projects / 2026", role: ""}
     ]
-    function loadFolders() { record("folders"); foldersError = ""; foldersLoaded = true }
+    function loadFolders() {
+        record("folders")
+        foldersError = ""
+        foldersLoaded = true
+        var next = ({})
+        Object.keys(folderCache).forEach(function(key) { next[key] = folderCache[key] })
+        next[folderCacheKey()] = {loaded: true, folders: folders.slice()}
+        folderCache = next
+    }
     function selectFolder(id) {
         record("folder", id)
         folderId = id
@@ -173,6 +189,6 @@ Item {
         messages = fixtures.slice((page - 1) * 50, page * 50)
         return true
     }
-    onAccountChanged: { folderId = ""; folderName = "Inbox"; foldersLoaded = false; foldersError = ""; populate() }
+    onAccountChanged: { folderId = ""; folderName = "Inbox"; restoreFolders(false); foldersError = ""; populate() }
     Component.onCompleted: populate()
 }

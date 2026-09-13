@@ -169,6 +169,7 @@ Sizes are decoded payload sizes, not the encoded transfer size; unknown sizes ar
 python3 -m unittest discover -s tests -v
 scripts/smoke-ui
 scripts/test-lifecycle
+scripts/test-account-settings
 scripts/test-pagination
 scripts/test-folders
 scripts/test-moves
@@ -183,7 +184,7 @@ bin/yetimail-helper read --demo --id demo-1
 
 The smoke test launches a temporary **offscreen** Quickshell with demo data, tests the QML → helper → inbox/read round trip, then exits. It does not install/enable anything or access your mail. Override `OMARCHY_SHELL_PATH` if Omarchy's shell is elsewhere. A guard executable prevents accidental Himalaya access even if demo mode regresses.
 
-The lifecycle tests use shell fixtures instead of Python/Himalaya to check delayed host settings, overlapping requests, stale-result rejection, and failed launches. They replace only the compositor popup container for offscreen operation. Missing-executable warnings are expected in these tests.
+The lifecycle tests use shell fixtures instead of Python/Himalaya to check delayed host settings, overlapping requests, stale-result rejection, and failed launches. They replace only the compositor popup container for offscreen operation. Missing-executable warnings are expected in these tests. The account-settings integration suite exercises the production MailService facade and its internal owner with delayed offline processes, including config/demo stale-result rejection, save failure fencing, and failed launches.
 
 The offline integration entry points require Bash, coreutils `timeout`, Quickshell, and Python 3 where a Python fixture is used. Their named QML, Python, and process fixtures live under `tests/integration/<suite>/`; the scripts remain thin launchers. A shared harness gives every suite a private temporary HOME/XDG environment, a fail-closed PATH and Himalaya guard, hard process timeouts, scenario-labeled failures, and child/temp cleanup. The harness guard itself has Python regression coverage. Scenario state is synchronized through service conditions; hard timeouts only bound a failed run.
 
@@ -220,7 +221,7 @@ ui/*.qml
   presentation
 ```
 
-`Widget.qml` remains the BarWidget shell integration and sole interaction coordinator: it owns keyboard commands, selection and reader modes, modal guards, deletion snapshots, mutation coordination, and service/external-link calls. `ui/InboxPane.qml` and `ui/ReaderPane.qml` render independent data inputs and emit user-intent signals; their imperative APIs only focus, reveal rows, or scroll. `ui/AccountPicker.qml`, `ui/AccountSettings.qml`, `ui/FolderPicker.qml`, `ui/DeleteConfirmation.qml`, and `ui/ShortcutHelp.qml` are stable sibling overlays, not children of disabled mailbox controls. The inbox exposes the account and mailbox buttons' anchor geometry so each picker stays directly above its footer icon. `ui/MailLabel.qml` and `ui/MailButton.qml` share the monospace presentation defaults; labels and selectable message text remain plain text. Components never receive the widget/controller or call MailService, and no loaders recreate panes on mode changes.
+`Widget.qml` remains the BarWidget shell integration and sole interaction coordinator: it owns keyboard commands, selection and reader modes, modal guards, deletion snapshots, mutation coordination, and service/external-link calls. `AccountSettingsService.qml` internally owns account overview, private-label and configuration-save request state and processes; `MailService.qml` preserves the UI-facing properties, methods and transaction signals as a narrow compatibility facade and retains mailbox reset/fetch fencing. `ui/InboxPane.qml` and `ui/ReaderPane.qml` render independent data inputs and emit user-intent signals; their imperative APIs only focus, reveal rows, or scroll. `ui/AccountPicker.qml`, `ui/AccountSettings.qml`, `ui/FolderPicker.qml`, `ui/DeleteConfirmation.qml`, and `ui/ShortcutHelp.qml` are stable sibling overlays, not children of disabled mailbox controls. The inbox exposes the account and mailbox buttons' anchor geometry so each picker stays directly above its footer icon. `ui/MailLabel.qml` and `ui/MailButton.qml` share the monospace presentation defaults; labels and selectable message text remain plain text. Components never receive the widget/controller or call MailService, and no loaders recreate panes on mode changes.
 
 The adapter executes argument arrays, never shell command strings. Account credentials stay under Himalaya's control. The helper suppresses backend stderr in UI errors because it may contain private configuration details. For connection errors, troubleshoot with Himalaya directly in a private terminal.
 

@@ -1,0 +1,48 @@
+#!/bin/bash
+set -eu
+helper=${1:-}
+operation=${2:-}
+shift 2 || true
+config=""
+demo=false
+account=""
+label=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --config) config=${2:-}; shift 2 ;;
+        --config=*) config=${1#*=}; shift ;;
+        --demo) demo=true; shift ;;
+        --account=*) account=${1#*=}; shift ;;
+        --label=*) label=${1#*=}; shift ;;
+        *) shift ;;
+    esac
+done
+printf '%s config=%s demo=%s account=%s label=%s\n' "$operation" "${config:-none}" "$demo" "${account:-none}" "${label:-none}" >> "${YETIMAIL_CALLS:?}"
+revision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+account_json() {
+    id=$1
+    label_value=$2
+    printf '{"accounts":[{"id":"%s","label":"%s","email":"test@example.invalid","display-name":"Test","default":true,"receiving":["imap"],"sending":["smtp"],"revision":"%s","editable":true,"editable-reason":"","mailbox-mappings":{"inbox":"INBOX","sent":"Sent","drafts":"Drafts","trash":"Trash","archive":"Archive"}}]}\n' "$id" "$label_value" "$revision"
+}
+case "$operation" in
+    list) printf '{"messages":[],"page":1,"hasNext":false,"account":"Fixture"}\n' ;;
+    folders) printf '{"folders":[]}\n' ;;
+    accounts)
+        [[ $config != /old.toml ]] || /bin/sleep 0.25
+        id=${config##*/}; id=${id%.toml}; [[ -n $id ]] || id=default
+        account_json "$id" "${id}-label"
+        ;;
+    account-labels)
+        if [[ $demo == false ]]; then /bin/sleep 0.25; printf '{"labels":{"fixture":"real-label"}}\n'
+        else printf '{"labels":{"fixture":"demo-label"}}\n'; fi
+        ;;
+    account-label)
+        /bin/sleep 0.25
+        printf '{"id":"%s","label":"%s"}\n' "$account" "$label"
+        ;;
+    account-save)
+        /bin/sleep 0.25
+        account_json "$account" "saved-label"
+        ;;
+    *) printf '{"error":"unexpected fixture operation"}\n'; exit 2 ;;
+esac

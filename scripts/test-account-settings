@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Offline integration regressions for the real account-settings QML owner and facade.
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+source "$root/tests/integration/harness.sh"
+integration_init account_settings
+
+ln -s "$root" "$work/Yetimail"
+cp "$root/tests/integration/account-settings/shell.qml" "$work/shell.qml"
+cp "$root/tests/integration/account-settings/python-fixture" "$work/python-fixture"
+chmod +x "$work/python-fixture"
+
+status=0
+for scenario in stale missing; do
+    printf '\n=== account settings: %s ===\n' "$scenario"
+    rm -f "$work/bin/python3"
+    if [[ $scenario == stale ]]; then cp "$work/python-fixture" "$work/bin/python3"; fi
+    export YETIMAIL_SCENARIO="$scenario" YETIMAIL_CALLS="$work/$scenario.calls"
+    : > "$YETIMAIL_CALLS"
+    if ! integration_run_qml "$scenario" 12; then status=1; fi
+    printf '%s\n' '--- fixture calls ---'
+    cat "$YETIMAIL_CALLS"
+    if ! integration_assert_output "$scenario" "ACCOUNT_SETTINGS_OK $scenario" \
+        'ACCOUNT_SETTINGS_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration'; then status=1; fi
+    if [[ $scenario == stale ]]; then
+        if ! grep -q '^accounts config=/old.toml demo=false' "$YETIMAIL_CALLS" ||
+           ! grep -q '^accounts config=/new.toml demo=false' "$YETIMAIL_CALLS" ||
+           ! grep -q '^account-labels config=none demo=true' "$YETIMAIL_CALLS" ||
+           ! grep -q '^account-save config=/new.toml demo=false account=new' "$YETIMAIL_CALLS" ||
+           ! grep -q '^list config=/changed.toml demo=false' "$YETIMAIL_CALLS"; then
+            echo 'ACCOUNT_SETTINGS_FAIL stale: expected account process coverage was not observed'
+            status=1
+        fi
+    elif [[ -s $YETIMAIL_CALLS ]]; then
+        echo 'ACCOUNT_SETTINGS_FAIL missing: unexpected executable invocation'
+        status=1
+    fi
+done
+if ! integration_assert_no_himalaya; then status=1; fi
+if [[ $status == 0 ]]; then echo 'YETIMAIL_ACCOUNT_SETTINGS_OK'; fi
+exit "$status"

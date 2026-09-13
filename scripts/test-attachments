@@ -5,6 +5,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 source "$root/tests/integration/harness.sh"
 integration_init attachments
 ln -s "$root/MailService.qml" "$work/MailService.qml"
+ln -s "$root/AccountSettingsService.qml" "$work/AccountSettingsService.qml"
 cp "$root/tests/integration/attachments/python-fixture" "$work/bin/python3"
 cp "$root/tests/integration/attachments/xdg-open" "$work/bin/xdg-open"
 cp "$root/tests/integration/attachments/shell.qml" "$work/shell.qml"

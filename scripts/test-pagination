@@ -9,6 +9,7 @@ source "$root/tests/integration/harness.sh"
 integration_init pagination
 export YETIMAIL_TEST_PYTHON="$python"
 ln -s "$root/MailService.qml" "$work/MailService.qml"
+ln -s "$root/AccountSettingsService.qml" "$work/AccountSettingsService.qml"
 ln -s "$root/bin/yetimail-helper" "$work/bin/yetimail-helper"
 cp "$root/tests/integration/pagination/python-fixture" "$work/bin/python3"
 cp "$root/tests/integration/pagination/shell.qml" "$work/shell.qml"

@@ -22,10 +22,15 @@ for path in "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" \
             "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"; do
     [[ $path == "$work"/* && -d $path ]]
 done
-/usr/bin/sleep 30 &
+# Do not let the child retain subprocess.run's capture pipes after the shell exits.
+/usr/bin/sleep 30 >/dev/null 2>&1 &
 child=$!
+# Let Bash exec the background command before exercising PID-based cleanup.
+/usr/bin/sleep 0.05
 printf '%s\n' "$child" > "$YETIMAIL_CHILD_PIDS"
 printf '%s\n%s\n' "$work" "$child"
+integration_cleanup
+trap - EXIT
 '''
         result = subprocess.run(
             ["bash", "-c", script, "harness-test", str(ROOT)],

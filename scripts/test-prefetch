@@ -2,203 +2,31 @@
 # Offline production MailService/Process regressions. No production helper runs.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
-quickshell=$(command -v quickshell)
+quickshell=$(command -v quickshell || true)
 python=$(command -v python3)
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+source "$root/tests/integration/harness.sh"
+integration_init prefetch
 ln -s "$root/MailService.qml" "$work/MailService.qml"
-mkdir "$work/bin"
+cp "$root/tests/integration/prefetch/python-wrapper" "$work/bin/python3"
+cp "$root/tests/integration/prefetch/fixture.py" "$work/fixture.py"
+cp "$root/tests/integration/prefetch/shell.qml" "$work/shell.qml"
 export YETIMAIL_FIXTURE="$work/fixture.py" YETIMAIL_TEST_PYTHON="$python"
-cat > "$work/bin/python3" <<'SH'
-#!/bin/sh
-exec "$YETIMAIL_TEST_PYTHON" "$YETIMAIL_FIXTURE" "$@"
-SH
-cat > "$work/bin/himalaya" <<'SH'
-#!/bin/sh
-printf 'FORBIDDEN Himalaya invocation\n' >> "$YETIMAIL_CALLS"
-exit 99
-SH
-chmod +x "$work/bin/python3" "$work/bin/himalaya"
-cat > "$work/fixture.py" <<'PY'
-import json
-import os
-import sys
-import time
 
-# Ignore the helper path, never execute it or inspect mail configuration.
-operation, *args = sys.argv[2:]
-options = {}
-while args:
-    arg = args.pop(0)
-    if arg.startswith('--mailbox='):
-        options['mailbox'] = arg.split('=', 1)[1]
-    elif arg in ('--account', '--config', '--id', '--page') and args:
-        options[arg[2:]] = args.pop(0)
-    else:
-        raise RuntimeError('FORBIDDEN argument: ' + arg)
-if operation not in ('list', 'read', 'folders'):
-    raise RuntimeError('FORBIDDEN operation: ' + operation)
-
-def log(event):
-    with open(os.environ['YETIMAIL_CALLS'], 'a') as stream:
-        stream.write(json.dumps(dict(event=event, operation=operation,
-                                    time=time.monotonic(), **options)) + '\n')
-
-log('start')
-if operation == 'read':
-    time.sleep(0.65)
-    result = dict(id=options['id'], body='fixture ' + options.get('account', ''))
-    if os.environ['YETIMAIL_SCENARIO'] == 'failure':
-        result = dict(error='PRIVATE background failure')
-elif operation == 'list':
-    result = dict(page=int(options['page']), hasNext=True,
-                  messages=[dict(id=x, subject=x, unread=True) for x in 'abcde'])
-else:
-    result = dict(folders=[dict(id='Archive', name='Archive', role='archive')])
-log('end')
-print(json.dumps(result))
-sys.exit(1 if 'error' in result else 0)
-PY
-cat > "$work/shell.qml" <<'QML'
-import QtQuick
-import Quickshell
-ShellRoot {
-    id: test
-    property string scenario: Quickshell.env("YETIMAIL_SCENARIO")
-    property int phase: 0
-    property double since: Date.now()
-    property int ticks: 0
-    property bool failed: false
-    function check(ok, reason) {
-        if (!ok) {
-            failed = true
-            console.error("PREFETCH_FAIL " + scenario + " phase " + phase + ": " + reason)
-            Qt.quit()
-        }
-        return ok
-    }
-    function advance() { phase++; since = Date.now() }
-    function pass() { console.log("PREFETCH_OK " + scenario); Qt.quit() }
-    MailService { id: mail; account: "fixture" }
-    Timer {
-        interval: 20; running: true; repeat: true
-        onTriggered: {
-            if (test.failed) return
-            if (++test.ticks > 350) { test.check(false, "timeout"); return }
-            var elapsed = Date.now() - test.since
-            var s = test.scenario
-            if (!test.check(!mail.readError && !mail.actionError && !mail.listError,
-                            "background error escaped into UI")) return
-            if (!test.check(mail.messages.every(function(m) { return m.unread }),
-                            "navigation changed seen state")) return
-            switch (test.phase) {
-            case 0:
-                if (mail.loading || !mail.messages.length) return
-                mail.setPrefetchSelection("a")
-                if (!test.check(!mail.prefetching, "selection bypassed debounce")) return
-                test.advance(); return
-            case 1:
-                if (elapsed < 100) return
-                if (!test.check(!mail.prefetching, "early background launch")) return
-                if (s === "debounce") mail.setPrefetchSelection("b")
-                if (s === "pending-withdrawal") mail.setPrefetchSelection("")
-                test.advance(); return
-            case 2:
-                if (s === "pending-withdrawal") {
-                    if (elapsed < 850) return
-                    if (test.check(!mail.prefetching && !mail.prefetchQueue.length && !mail.message,
-                                   "withdrawn debounce launched")) test.pass()
-                    return
-                }
-                if (s === "debounce" && elapsed < 250) {
-                    test.check(!mail.prefetching, "cursor change did not restart debounce")
-                    return
-                }
-                if (!mail.prefetching) return
-                if (!test.check(mail.prefetchId === (s === "debounce" ? "b" : "a"),
-                                "wrong cursor prefetched")) return
-                if (s === "promotion" || s === "promoted-stale") {
-                    mail.readMessage("a")
-                    if (!test.check(mail.reading && mail.prefetchForeground, "same-ID not promoted")) return
-                    // Widget withdraws list interest when it switches to the reader.
-                    mail.setPrefetchSelection("")
-                    if (s === "promoted-stale") mail.account = "other"
-                } else if (s === "different") {
-                    mail.readMessage("e")
-                    if (!test.check(mail.reading && !mail.prefetchForeground,
-                                    "different-ID foreground blocked/promoted")) return
-                    mail.setPrefetchSelection("")
-                } else if (s === "account") mail.account = "other"
-                else if (s === "config") mail.config = "/synthetic/never-read.toml"
-                else if (s === "folder") {
-                    mail.folders = [{id: "Archive", name: "Archive", role: "archive"}]
-                    if (!test.check(mail.selectFolder("Archive"), "folder transition rejected")) return
-                } else if (s === "page") mail.nextPage()
-                else if (s === "withdrawal") mail.setPrefetchSelection("")
-                else if (s === "inactive") mail.active = false
-                test.advance(); return
-            case 3:
-                // Allow time for accidental queued launches after the first exit.
-                if (elapsed < (s === "debounce" || s === "failure" || s === "page" ? 2400 : 1500)) return
-                if (!test.check(!mail.prefetching && !mail.reading && !mail.loading &&
-                                !mail.prefetchQueue.length, "requests did not drain")) return
-                if (s === "promotion" || s === "different") {
-                    if (!test.check(mail.message && mail.message.id === (s === "promotion" ? "a" : "e"),
-                                    "foreground result missing/wrong")) return
-                } else if (!test.check(!mail.message && !mail.selectedId, "background/stale result published")) return
-                if (s === "page" && !test.check(mail.page === 2, "page transition missing")) return
-                if (s === "folder" && !test.check(mail.folderId === "Archive", "folder transition missing")) return
-                test.pass()
-            }
-        }
-    }
-}
-QML
 status=0
 for scenario in debounce promotion different account config folder page withdrawal pending-withdrawal inactive promoted-stale failure; do
     export YETIMAIL_SCENARIO="$scenario" YETIMAIL_CALLS="$work/$scenario.calls"
     : > "$YETIMAIL_CALLS"
     printf '\n=== prefetch: %s ===\n' "$scenario"
-    if ! QT_QPA_PLATFORM=offscreen PATH="$work/bin" \
-        /usr/bin/timeout --kill-after=2 10 "$quickshell" -p "$work" --no-color > "$work/$scenario.output" 2>&1; then
-        echo "PREFETCH_FAIL $scenario: shell failed or timed out"
+    if ! integration_run_qml "$scenario" 10; then status=1; fi
+    if ! integration_assert_output "$scenario" "PREFETCH_OK $scenario" \
+        'PREFETCH_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration|FORBIDDEN|Traceback|PRIVATE'; then
         status=1
     fi
-    cat "$work/$scenario.output"
-    if ! grep -q "PREFETCH_OK $scenario" "$work/$scenario.output" ||
-       grep -Eq 'PREFETCH_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration|FORBIDDEN|Traceback|PRIVATE' "$work/$scenario.output"; then status=1; fi
-    if ! "$python" - "$YETIMAIL_CALLS" "$scenario" <<'PY'
-import json
-import sys
-
-path, scenario = sys.argv[1:]
-with open(path) as stream:
-    events = [json.loads(line) for line in stream]
-reads = [e for e in events if e['operation'] == 'read']
-starts = [e for e in reads if e['event'] == 'start']
-expected = {'debounce': list('bcd'), 'failure': list('abc'), 'page': list('abc'),
-            'different': list('ae'), 'pending-withdrawal': []}.get(scenario, ['a'])
-assert [e['id'] for e in starts] == expected, (scenario, 'duplicate/stale/missing read', starts)
-active = set()
-for event in reads:
-    if event['event'] == 'start':
-        assert event['id'] not in active, ('duplicate in-flight ID', event)
-        active.add(event['id'])
-        assert len(active) <= (2 if scenario == 'different' else 1), ('parallel background reads', reads)
-    else:
-        active.remove(event['id'])
-assert not active, ('unfinished processes', active)
-if scenario == 'different':
-    background_end = next(e['time'] for e in reads if e['id'] == 'a' and e['event'] == 'end')
-    assert starts[1]['time'] < background_end, 'foreground waited for unrelated background process'
-assert all(e.get('account') == 'fixture' and not e.get('config') and not e.get('mailbox')
-           for e in starts), ('mutable background command context', starts)
-print('PREFETCH_CALLS_OK', scenario, ''.join(e['id'] for e in starts) or '(none)')
-PY
-    then
+    if ! "$python" "$root/tests/integration/prefetch/validate_calls.py" "$YETIMAIL_CALLS" "$scenario"; then
         cat "$YETIMAIL_CALLS"
         status=1
     fi
 done
+if ! integration_assert_no_himalaya; then status=1; fi
 if [[ $status == 0 ]]; then echo YETIMAIL_PREFETCH_OK; fi
 exit "$status"

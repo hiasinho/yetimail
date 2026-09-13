@@ -2,55 +2,23 @@
 # Offline deletion lifecycle. No real Python, Himalaya, config or network in child PATH.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
-quickshell=$(command -v quickshell)
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-mkdir "$work/bin"
+source "$root/tests/integration/harness.sh"
+integration_init deletions
 ln -s "$root" "$work/Yetimail"
-cp "$root/tests/delete-lifecycle.qml" "$work/shell.qml"
-cat > "$work/bin/python3" <<'SH'
-#!/bin/sh
-shift
-operation=$1; shift
-account=default mailbox=Inbox id=none page=1
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --account) account=$2; shift 2 ;;
-        --mailbox=*) mailbox=${1#--mailbox=}; shift ;;
-        --id) id=$2; shift 2 ;;
-        --page) page=$2; shift 2 ;;
-        *) exit 98 ;;
-    esac
-done
-printf '%s|%s|%s|%s|%s\n' "$operation" "$account" "$mailbox" "$id" "$page" >> "$YETIMAIL_CALLS"
-/usr/bin/sleep 0.1
-case "$operation" in
-    list)
-        if [ "$page" = 2 ]; then
-            printf '{"messages":[{"id":"same"}],"page":2,"hasNext":false}\n'
-        else
-            if [ -f "$YETIMAIL_STATE/$account-$mailbox" ]; then first=fill; else first=same; fi
-            printf '{"messages":[{"id":"%s","subject":"%s","unread":true},{"id":"fail"},{"id":"bad"},{"id":"launch"}],"page":1,"hasNext":true}\n' "$first" "$account"
-        fi ;;
-    read) printf '{"id":"%s","body":"offline","attachments":[{"id":"a","openable":true}]}\n' "$id" ;;
-    delete)
-        /usr/bin/sleep 0.2
-        case "$id" in
-            fail) printf '{"error":"Offline delete failed"}\n'; exit 1 ;;
-            bad) printf '{"id":"wrong"}\n' ;;
-            launch) /usr/bin/chmod -x "$0"; printf '{"error":"Launch failure armed"}\n'; exit 1 ;;
-            *) /usr/bin/touch "$YETIMAIL_STATE/$account-$mailbox"; printf '{"id":"%s"}\n' "$id" ;;
-        esac ;;
-    *) exit 98 ;;
-esac
-SH
-chmod +x "$work/bin/python3"
-export YETIMAIL_CALLS="$work/calls" YETIMAIL_STATE="$work"
-QT_QPA_PLATFORM=offscreen PATH="$work/bin" /usr/bin/timeout --kill-after=2 12 "$quickshell" -p "$work" --no-color > "$work/output" 2>&1 || { cat "$work/output"; exit 1; }
-cat "$work/output"
-cat "$work/calls"
-grep -q YETIMAIL_DELETIONS_OK "$work/output"
-! grep -Eq 'DELETIONS_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration' "$work/output"
-grep -Fq 'delete|offline|Inbox|same|1' "$work/calls"
-grep -Fq 'delete|second|Exact / Folder|same|1' "$work/calls"
-! grep -Eq '^(mark|move|save|folders)\|' "$work/calls"
+cp "$root/tests/integration/deletions/shell.qml" "$work/shell.qml"
+cp "$root/tests/integration/deletions/python-fixture" "$work/bin/python3"
+export YETIMAIL_CALLS="$work/calls" YETIMAIL_STATE="$work/state"
+mkdir "$YETIMAIL_STATE"
+: > "$YETIMAIL_CALLS"
+
+integration_run_qml deletions 12
+integration_assert_output deletions YETIMAIL_DELETIONS_OK \
+    'DELETIONS_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration'
+cat "$YETIMAIL_CALLS"
+grep -Fq 'delete|offline|Inbox|same|1' "$YETIMAIL_CALLS"
+grep -Fq 'delete|second|Exact / Folder|same|1' "$YETIMAIL_CALLS"
+if grep -Eq '^(mark|move|save|folders)\|' "$YETIMAIL_CALLS"; then
+    echo 'DELETIONS_FAIL: unexpected operation launched' >&2
+    exit 1
+fi
+integration_assert_no_himalaya

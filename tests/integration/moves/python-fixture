@@ -1,0 +1,53 @@
+#!/bin/sh
+shift
+operation=$1; shift
+mailbox=Inbox account=default id=none destination=none page=1
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --mailbox=*) mailbox=${1#--mailbox=}; shift ;;
+        --destination=*) destination=${1#--destination=}; shift ;;
+        --account) account=$2; shift 2 ;;
+        --id) id=$2; shift 2 ;;
+        --page) page=$2; shift 2 ;;
+        --attachment|--cache-identity) shift 2 ;;
+        --force) shift ;;
+        *) exit 98 ;;
+    esac
+done
+printf '%s|%s|%s|%s|%s|%s\n' "$operation" "$account" "$mailbox" "$id" "$destination" "$page" >> "$YETIMAIL_CALLS"
+case "$operation" in
+    folders)
+        printf '%s\n' '{"folders":[{"id":"in","name":"Inbox","role":"inbox"},{"id":"archive","name":"Archive","role":"archive"},{"id":"trash","name":"Trash","role":"trash"},{"id":"flaky","name":"Flaky"},{"id":"fail","name":"Fail"},{"id":"bad","name":"Bad"},{"id":"launch","name":"Launch"}]}' ;;
+    list)
+        rows= sep=
+        if [ "$account" = page-offline ] && [ "$page" = 2 ]; then ids=older; else ids='same other third'; fi
+        for message_id in $ids; do
+            [ -f "$YETIMAIL_STATE/moved-$account-$message_id" ] && continue
+            rows="$rows$sep{\"id\":\"$message_id\",\"subject\":\"$account-$message_id\",\"unread\":true}"
+            sep=,
+        done
+        if [ "$account" = page-offline ] && [ "$page" = 1 ]; then has_next=true; else has_next=false; fi
+        printf '{"messages":[%s],"page":%s,"hasNext":%s}\n' "$rows" "$page" "$has_next" ;;
+    read)
+        /usr/bin/sleep 0.05
+        printf '{"id":"%s","subject":"reader","body":"offline","attachments":[]}\n' "$id" ;;
+    move)
+        if ! /usr/bin/mkdir "$YETIMAIL_STATE/move-lock" 2>/dev/null; then
+            printf '{"error":"Concurrent move"}\n'; exit 97
+        fi
+        trap '/usr/bin/rmdir "$YETIMAIL_STATE/move-lock"' EXIT
+        /usr/bin/sleep 0.18
+        case "$destination" in
+            fail) printf '{"error":"Offline move failed"}\n'; exit 1 ;;
+            flaky)
+                if [ ! -f "$YETIMAIL_STATE/flaky-once" ]; then
+                    /usr/bin/touch "$YETIMAIL_STATE/flaky-once"
+                    printf '{"error":"Offline transient failure"}\n'; exit 1
+                fi ;;
+            bad) printf '{"id":"wrong","destination":"bad"}\n'; exit 0 ;;
+            launch) /usr/bin/chmod -x "$0"; printf '{"error":"Launch failure armed"}\n'; exit 1 ;;
+        esac
+        /usr/bin/touch "$YETIMAIL_STATE/moved-$account-$id"
+        printf '{"id":"%s","destination":"%s"}\n' "$id" "$destination" ;;
+    *) exit 98 ;;
+esac

@@ -185,6 +185,8 @@ The smoke test launches a temporary **offscreen** Quickshell with demo data, tes
 
 The lifecycle tests use shell fixtures instead of Python/Himalaya to check delayed host settings, overlapping requests, stale-result rejection, and failed launches. They replace only the compositor popup container for offscreen operation. Missing-executable warnings are expected in these tests.
 
+The offline integration entry points require Bash, coreutils `timeout`, Quickshell, and Python 3 where a Python fixture is used. Their named QML, Python, and process fixtures live under `tests/integration/<suite>/`; the scripts remain thin launchers. A shared harness gives every suite a private temporary HOME/XDG environment, a fail-closed PATH and Himalaya guard, hard process timeouts, scenario-labeled failures, and child/temp cleanup. The harness guard itself has Python regression coverage. Scenario state is synchronized through service conditions; hard timeouts only bound a failed run.
+
 Deletion tests cover safe CLI arguments, explicit-account and mailbox guards, synthetic demo operation, service failures/stale results/duplicate latches, and keyboard confirmation/cancellation/stale snapshots. Only mocked subprocesses, synthetic configs, and offline QML fixtures are used—no real mail commands run.
 
 Attachment tests cover safe extraction, private unique writes in temporary homes, traversal/symlink defenses, runnable-type restrictions, and service save/open guards with offline fixtures. No tests open real attachments or alter real mail flags.

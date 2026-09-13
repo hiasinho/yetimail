@@ -1,0 +1,62 @@
+#!/bin/sh
+helper=$1; shift
+if [ "$YETIMAIL_SCENARIO" = demo ]; then
+    # Refuse delegation unless the production helper is explicitly offline.
+    for arg do
+        if [ "$arg" = --demo ]; then
+            exec "$YETIMAIL_TEST_PYTHON" "$helper" "$@"
+        fi
+    done
+    printf 'FORBIDDEN non-demo Python invocation\n' >> "$YETIMAIL_CALLS"
+    exit 99
+fi
+operation=$1; shift
+account=default id=none page=1 seen=none cache_only=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --account) account=$2; shift 2 ;;
+        --mailbox) shift 2 ;;
+        --mailbox=*) shift ;;
+        --id) id=$2; shift 2 ;;
+        --page) page=$2; shift 2 ;;
+        --seen) seen=true; shift ;;
+        --unseen) seen=false; shift ;;
+        --cache-only) cache_only=true; shift ;;
+        *) printf 'BAD ARGUMENT\n' >> "$YETIMAIL_CALLS"; exit 98 ;;
+    esac
+done
+if [ "$cache_only" = true ]; then
+    printf '{"hit":false,"value":null}\n'
+    exit 0
+fi
+# Folder discovery is orthogonal to the pagination assertions below.
+if [ "$operation" = folders ]; then
+    printf '{"folders":[{"id":"INBOX","name":"Inbox","role":"inbox"}]}\n'
+    exit 0
+fi
+printf '%s account=%s id=%s page=%s seen=%s\n' "$operation" "$account" "$id" "$page" "$seen" >> "$YETIMAIL_CALLS"
+if [ "$operation" = mark ]; then
+    if ! /usr/bin/mkdir "$YETIMAIL_CALLS.mark-lock" 2>/dev/null; then
+        printf 'BAD concurrent mark\n' >> "$YETIMAIL_CALLS"; exit 97
+    fi
+    trap '/usr/bin/rmdir "$YETIMAIL_CALLS.mark-lock"' EXIT
+fi
+/usr/bin/sleep 0.2
+case "$operation" in
+    list)
+        if [ "$page" = 3 ]; then printf '{"error":"fixture page failure"}\n'; exit 1; fi
+        case "$account" in batch-*)
+            printf '{"hasNext":false,"messages":[{"id":"shared","subject":"%s page 1","unread":true},{"id":"other","unread":true},{"id":"third","unread":true}]}\n' "$account"
+            exit 0 ;;
+        esac
+        # Deliberately omit page: legacy helper responses fall back to requestedPage.
+        printf '{"account":"%s","hasNext":true,"messages":[{"id":"%s-%s","subject":"%s page %s","unread":true}]}\n' "$account" "$account" "$page" "$account" "$page" ;;
+    read) printf '{"id":"%s","body":"fixture"}\n' "$id" ;;
+    mark)
+        if [ "$account" = batch-failure ] && [ "$id" = other ]; then
+            printf '{"error":"fixture batch failure"}\n'; exit 1
+        fi
+        if [ "$seen" = false ]; then printf '{"error":"fixture mark failure"}\n'; exit 1; fi
+        printf '{"id":"%s","seen":%s}\n' "$id" "$seen" ;;
+    *) printf 'BAD OPERATION\n' >> "$YETIMAIL_CALLS"; exit 98 ;;
+esac

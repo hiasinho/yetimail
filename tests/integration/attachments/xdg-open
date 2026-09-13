@@ -1,0 +1,11 @@
+#!/bin/sh
+printf '%s\n' "$#" "$@" >> "$YETIMAIL_OPEN_ARGS"
+if [ "$1" = /tmp/linger.txt ]; then
+    printf '%s\n' "$$" >> "$YETIMAIL_OPENER_PIDS"
+    /usr/bin/sleep 32 &
+    sleeper=$!
+    trap 'kill "$sleeper" 2>/dev/null || true; wait "$sleeper" 2>/dev/null || true; exit 7' TERM INT
+    wait "$sleeper"
+    printf 'finished\n' >> "$YETIMAIL_OPENER_FINISHED"
+fi
+exit 7

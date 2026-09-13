@@ -1,0 +1,3 @@
+#!/bin/sh
+printf 'FORBIDDEN Himalaya invocation\n' >> "${YETIMAIL_HIMALAYA_GUARD:?}"
+exit 99

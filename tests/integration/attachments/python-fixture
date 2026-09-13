@@ -1,0 +1,29 @@
+#!/bin/sh
+shift
+operation=$1; shift
+id=shared attachment=fixture account=alpha
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --id) id=$2; shift 2 ;;
+        --attachment) attachment=$2; shift 2 ;;
+        --account) account=$2; shift 2 ;;
+        --page|--config|--mailbox) shift 2 ;;
+        --mailbox=*) shift ;;
+        --demo) shift ;;
+        *) exit 98 ;;
+    esac
+done
+/usr/bin/sleep 0.15
+case "$operation" in
+    folders) printf '{"folders":[{"id":"INBOX","name":"Inbox","role":"inbox"}]}\n' ;;
+    list) printf '{"messages":[{"id":"shared","unread":true}]}\n' ;;
+    read) printf '{"id":"%s","body":"fixture","attachments":[{"id":"fixture","openable":true},{"id":"blocked","openable":false},{"id":"fail","openable":true},{"id":"invalid","openable":true},{"id":"linger","openable":true},{"id":"missing","openable":true}]}\n' "$id" ;;
+    save)
+        if [ "$attachment" = fail ]; then printf '{"error":"fixture save failure"}\n'; exit 1; fi
+        if [ "$attachment" = invalid ]; then id=wrong; fi
+        path='/tmp/attachment with spaces.txt'
+        if [ "$attachment" = linger ]; then path=/tmp/linger.txt; fi
+        if [ "$attachment" = missing ]; then /usr/bin/rm "$YETIMAIL_TEST_BIN/xdg-open"; fi
+        printf '{"id":"%s","attachment":"%s","path":"%s","openable":true}\n' "$id" "$attachment" "$path" ;;
+    *) exit 98 ;;
+esac

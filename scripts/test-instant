@@ -2,265 +2,31 @@
 # Offline regression of the production MailService; never executes the real helper.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
-quickshell=$(command -v quickshell)
+quickshell=$(command -v quickshell || true)
 python=$(command -v python3)
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+source "$root/tests/integration/harness.sh"
+integration_init instant
 ln -s "$root/MailService.qml" "$work/MailService.qml"
-mkdir "$work/bin"
-export YETIMAIL_TEST_PYTHON="$python" YETIMAIL_FIXTURE="$work/fixture.py"
-cat > "$work/bin/python3" <<'SH'
-#!/bin/sh
-exec "$YETIMAIL_TEST_PYTHON" "$YETIMAIL_FIXTURE" "$@"
-SH
-cat > "$work/bin/himalaya" <<'SH'
-#!/bin/sh
-printf 'FORBIDDEN Himalaya invocation\n' >> "$YETIMAIL_CALLS"
-exit 99
-SH
-chmod +x "$work/bin/python3" "$work/bin/himalaya"
-cat > "$work/fixture.py" <<'PY'
-import json
-import os
-import sys
-import time
+cp "$root/tests/integration/instant/python-wrapper" "$work/bin/python3"
+cp "$root/tests/integration/instant/fixture.py" "$work/fixture.py"
+cp "$root/tests/integration/instant/shell.qml" "$work/shell.qml"
+export YETIMAIL_FIXTURE="$work/fixture.py" YETIMAIL_TEST_PYTHON="$python"
 
-# Discard the production helper path. Config paths are opaque synthetic strings.
-operation, *args = sys.argv[2:]
-options = {'probe': False}
-while args:
-    arg = args.pop(0)
-    if arg == '--cache-only':
-        options['probe'] = True
-    elif arg.startswith('--mailbox='):
-        options['mailbox'] = arg.split('=', 1)[1]
-    elif arg in ('--account', '--config', '--page', '--id') and args:
-        options[arg[2:]] = args.pop(0)
-    else:
-        raise RuntimeError('FORBIDDEN argument: ' + arg)
-if operation not in ('list', 'folders', 'read'):
-    raise RuntimeError('FORBIDDEN operation: ' + operation)
-assert options.get('account') in ('A', 'B', 'C')
-assert options.get('config') in ('/synthetic/old.toml', '/synthetic/new.toml')
-
-def log(event):
-    with open(os.environ['YETIMAIL_CALLS'], 'a') as stream:
-        stream.write(json.dumps(dict(event=event, operation=operation,
-                                    time=time.monotonic(), **options)) + '\n')
-
-log('start')
-account = options['account']
-version = 'new' if options['config'].endswith('new.toml') else 'old'
-if operation == 'list':
-    time.sleep(0.12 if options['probe'] else 0.55)
-    value = dict(account=account, page=int(options['page']), hasNext=False,
-                 messages=[dict(id=account + '-1', subject=account + ':' + version + ':live', unread=True)])
-    if options['probe']:
-        hit = os.environ['YETIMAIL_SCENARIO'] == 'hit'
-        value['messages'][0]['subject'] = account + ':' + version + ':disk'
-        result = dict(hit=hit, value=value if hit else None)
-    else:
-        result = value
-elif operation == 'folders':
-    time.sleep(0.1)
-    result = dict(folders=[dict(id='INBOX', name='Inbox', role='inbox'),
-                           dict(id='Archive', name='Archive', role='archive')])
-else:
-    time.sleep(0.05)
-    result = dict(id=options['id'], body='offline fixture')
-log('end')
-print(json.dumps(result))
-PY
-cat > "$work/shell.qml" <<'QML'
-import QtQuick
-import Quickshell
-ShellRoot {
-    id: test
-    property string scenario: Quickshell.env("YETIMAIL_SCENARIO")
-    property int phase: 0
-    property int ticks: 0
-    property bool failed: false
-    property string oldKey: ""
-    property string bKey: ""
-    property bool sawProbe: false
-    property bool sawColdLoad: false
-    function check(ok, why) {
-        if (!ok) {
-            failed = true
-            console.error("INSTANT_FAIL " + scenario + " phase " + phase + ": " + why)
-            Qt.quit()
-        }
-        return ok
-    }
-    function pass() { console.log("INSTANT_OK " + scenario); Qt.quit() }
-    function live(account, version) {
-        return mail.messages.length === 1 && mail.messages[0].subject === account + ":" + version + ":live"
-    }
-    function idle() { return !mail.listJob && !mail.listQueue.length && !mail.loading && !mail.refreshing }
-    MailService { id: mail; account: "A"; config: "/synthetic/old.toml" }
-    Timer {
-        interval: 10; running: true; repeat: true
-        onTriggered: {
-            if (test.failed) return
-            if (!test.check(++test.ticks < 1000, "timeout")) return
-            if (!test.check(!mail.listError && !mail.readError, "unexpected service error")) return
-            if (!test.check(mail.messages.every(function(m) { return m.id === mail.account + "-1" && m.unread }),
-                            "wrong account displayed or seen state changed")) return
-            var s = test.scenario
-            if (test.phase === 0) {
-                if (mail.listJob && mail.listJob.probe) {
-                    test.sawProbe = true
-                    if (!test.check(mail.loading && !mail.messages.length, "cold probe must block empty list")) return
-                }
-                if (mail.listJob && !mail.listJob.probe) {
-                    test.sawColdLoad = true
-                    if (s === "hit") {
-                        if (!test.check(!mail.loading && mail.refreshing && mail.messages.length === 1 &&
-                                        mail.messages[0].subject === "A:old:disk", "disk hit not shown during revalidation")) return
-                    } else if (!test.check(mail.loading && !mail.messages.length, "miss unexpectedly populated list")) return
-                }
-                if (!idle() || !live("A", "old")) return
-                if (!test.check(test.sawProbe && test.sawColdLoad, "missing probe/authoritative phases")) return
-                test.oldKey = mail.visibleListKey
-                if (s === "cold" || s === "hit") { test.pass(); return }
-                if (s === "switch" || s === "stale") {
-                    mail.account = "B"
-                    test.bKey = mail.visibleListKey
-                    if (!test.check(mail.loading && !mail.messages.length, "uncached B did not start cold")) return
-                } else if (s === "refresh" || s === "config") {
-                    mail.refresh()
-                    if (!test.check(!mail.loading && mail.refreshing && live("A", "old"), "cached refresh blanked/blocked list")) return
-                } else if (s === "warm") {
-                    // No implicit/default account, duplicates, or non-string entries.
-                    mail.warmAccounts(["A", "B", "B", "", "  ", null, 42, "C"])
-                    if (!test.check(mail.listQueue.length === 2 && mail.listQueue.every(function(j) {
-                        return !j.foreground && (j.context.account === "B" || j.context.account === "C") &&
-                               j.context.folder === "" && j.context.page === 1
-                    }), "warming queued current/unallowlisted account or non-Inbox page")) return
-                    if (!test.check(!mail.loading && !mail.refreshing && live("A", "old"), "warming disturbed foreground")) return
-                }
-                test.phase = 1
-                return
-            }
-            if (s === "switch") {
-                if (test.phase === 1) {
-                    if (!idle() || !live("B", "old")) return
-                    mail.account = "A"
-                    if (!test.check(!mail.loading && live("A", "old"), "A was not restored synchronously")) return
-                    test.phase = 2
-                } else {
-                    if (!test.check(!mail.loading && live("A", "old"), "restored list blanked while refreshing")) return
-                    if (idle()) test.pass()
-                }
-            } else if (s === "stale") {
-                if (test.phase === 1) {
-                    if (!mail.listJob || mail.listJob.probe || mail.listJob.context.account !== "B") return
-                    mail.account = "A"
-                    if (!test.check(!mail.loading && live("A", "old"), "return blocked by B in flight")) return
-                    test.phase = 2
-                } else {
-                    if (!test.check(!mail.loading && live("A", "old"), "inactive B completion replaced A")) return
-                    if (!idle()) return
-                    if (!test.check(!!mail.pageSnapshots[test.bKey] &&
-                                    mail.pageSnapshots[test.bKey].value.messages[0].id === "B-1", "inactive completion not cached")) return
-                    mail.account = "B"
-                    if (test.check(!mail.loading && live("B", "old"), "inactive snapshot not synchronously reusable")) test.phase = 3
-                }
-                if (test.phase === 3) {
-                    // Exit after restoration, before deferred revalidation starts.
-                    test.pass()
-                }
-            } else if (s === "refresh") {
-                if (test.phase === 1) {
-                    if (!mail.listJob) return
-                    mail.readMessage("A-1")
-                    if (!test.check(mail.reading && !mail.loading, "cached refresh blocked explicit read")) return
-                    test.phase = 2
-                } else if (test.phase === 2) {
-                    if (!mail.message) return
-                    if (!test.check(mail.message.id === "A-1" && !!mail.listJob && mail.refreshing,
-                                    "read waited for list refresh")) return
-                    test.phase = 3
-                } else if (idle() && !mail.reading) test.pass()
-            } else if (s === "config") {
-                if (test.phase === 1) {
-                    if (!mail.listJob) return
-                    mail.config = "/synthetic/new.toml"
-                    if (!test.check(!mail.pageSnapshots[test.oldKey] && mail.loading && !mail.messages.length,
-                                    "config change restored old snapshot")) return
-                    test.phase = 2
-                } else {
-                    if (!test.check(!mail.pageSnapshots[test.oldKey] && Object.keys(mail.pageSnapshots).every(function(k) {
-                        return mail.pageSnapshots[k].context.config === "/synthetic/new.toml"
-                    }) && mail.messages.every(function(m) { return m.subject === "A:new:live" }),
-                                    "old config completion repopulated snapshots/UI")) return
-                    if (idle() && live("A", "new")) test.pass()
-                }
-            } else if (s === "warm") {
-                if (!test.check(!mail.loading && !mail.refreshing && live("A", "old"), "background warm blocked/changed A")) return
-                if (!idle() || mail.folderWarmJob || mail.folderWarmQueue.length) return
-                var b = mail.listContext("B", "", 1).key
-                var c = mail.listContext("C", "", 1).key
-                if (!test.check(!!mail.pageSnapshots[b] && !!mail.pageSnapshots[c], "allowlisted pages not warmed")) return
-                mail.account = "B"
-                if (test.check(!mail.loading && live("B", "old"), "warm page not instant")) test.pass()
-            }
-        }
-    }
-}
-QML
 status=0
 for scenario in cold hit switch refresh warm stale config; do
     export YETIMAIL_SCENARIO="$scenario" YETIMAIL_CALLS="$work/$scenario.calls"
     : > "$YETIMAIL_CALLS"
     printf '\n=== instant: %s ===\n' "$scenario"
-    if ! QT_QPA_PLATFORM=offscreen PATH="$work/bin" \
-        /usr/bin/timeout --kill-after=2 15 "$quickshell" -p "$work" --no-color > "$work/$scenario.output" 2>&1; then
-        echo "INSTANT_FAIL $scenario: shell failed or timed out"
+    if ! integration_run_qml "$scenario" 15; then status=1; fi
+    if ! integration_assert_output "$scenario" "INSTANT_OK $scenario" \
+        'INSTANT_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration|FORBIDDEN|Traceback'; then
         status=1
     fi
-    cat "$work/$scenario.output"
-    if ! grep -q "INSTANT_OK $scenario" "$work/$scenario.output" ||
-       grep -Eq 'INSTANT_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration|FORBIDDEN|Traceback' "$work/$scenario.output"; then status=1; fi
-    if ! "$python" - "$YETIMAIL_CALLS" "$scenario" <<'PY'
-import json
-import sys
-
-path, scenario = sys.argv[1:]
-with open(path) as stream:
-    events = [json.loads(line) for line in stream]
-starts = [e for e in events if e['event'] == 'start']
-lists = [e for e in starts if e['operation'] == 'list']
-# Exact calls catch implicit accounts, duplicate probes, and accidental pagination.
-expected = [('A', True, 'old'), ('A', False, 'old')]
-if scenario in ('switch', 'stale'):
-    # Returning to a fresh in-memory folder snapshot is synchronous and does
-    # not launch another network revalidation.
-    expected += [('B', True, 'old'), ('B', False, 'old')]
-elif scenario == 'warm':
-    expected += [('B', True, 'old'), ('C', True, 'old'), ('B', False, 'old'), ('C', False, 'old')]
-elif scenario in ('refresh', 'config'):
-    expected += [('A', False, 'old')]
-    if scenario == 'config':
-        expected += [('A', True, 'new'), ('A', False, 'new')]
-actual = [(e['account'], e['probe'], 'new' if e['config'].endswith('new.toml') else 'old') for e in lists]
-assert actual == expected, (scenario, actual, expected)
-assert all(e['page'] == '1' and not e.get('mailbox') for e in lists), lists
-folders = [e for e in starts if e['operation'] == 'folders']
-assert [e['account'] for e in folders] == (['A', 'B', 'C'] if scenario == 'warm' else []), folders
-reads = [e for e in starts if e['operation'] == 'read']
-assert [e['id'] for e in reads] == (['A-1'] if scenario == 'refresh' else []), reads
-if scenario == 'refresh':
-    list_ends = [e for e in events if e['operation'] == 'list' and e['event'] == 'end']
-    read_end = next(e for e in events if e['operation'] == 'read' and e['event'] == 'end')
-    assert lists[-1]['time'] < read_end['time'] < list_ends[-1]['time'], 'read blocked on refresh'
-assert len(starts) * 2 == len(events), ('unfinished fixture calls', events)
-print('INSTANT_CALLS_OK', scenario)
-PY
-    then
+    if ! "$python" "$root/tests/integration/instant/validate_calls.py" "$YETIMAIL_CALLS" "$scenario"; then
         cat "$YETIMAIL_CALLS"
         status=1
     fi
 done
+if ! integration_assert_no_himalaya; then status=1; fi
 if [[ $status == 0 ]]; then echo YETIMAIL_INSTANT_OK; fi
 exit "$status"

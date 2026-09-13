@@ -1,0 +1,25 @@
+#!/bin/sh
+shift
+operation=$1; shift
+mailbox=Inbox account=default id=none cache_only=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --mailbox=*) mailbox=${1#--mailbox=}; shift ;;
+        --account) account=$2; shift 2 ;;
+        --id) id=$2; shift 2 ;;
+        --page|--attachment) shift 2 ;;
+        --seen|--unseen) shift ;;
+        --cache-only) cache_only=true; shift ;;
+        *) exit 98 ;;
+    esac
+done
+if [ "$cache_only" = true ]; then printf '{"hit":false,"value":null}\n'; exit 0; fi
+printf '%s|%s|%s\n' "$operation" "$account" "$mailbox" >> "$YETIMAIL_CALLS"
+/usr/bin/sleep 0.15
+case "$operation" in
+    folders) printf '{"folders":[{"id":"opaque","name":"Sent Items"},{"id":"localized","name":"Papierkorb","role":"trash"},{"id":"a1","name":"Archive"},{"id":"a2","name":"Archives"},{"id":"in","name":"Inbox"}]}\n' ;;
+    list) printf '{"messages":[{"id":"same","subject":"%s","unread":true}],"page":1,"hasNext":false}\n' "$mailbox" ;;
+    read) printf '{"id":"same","subject":"%s","body":"offline","attachments":[]}\n' "$mailbox" ;;
+    mark) /usr/bin/sleep 0.35; printf '{"id":"same","seen":true}\n' ;;
+    *) exit 98 ;;
+esac

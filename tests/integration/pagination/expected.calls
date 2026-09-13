@@ -1,0 +1,15 @@
+list account=personal id=none page=1 seen=none
+list account=personal id=none page=2 seen=none
+mark account=personal id=personal-2 page=1 seen=true
+mark account=personal id=personal-2 page=1 seen=false
+list account=personal id=none page=3 seen=none
+list account=work id=none page=1 seen=none
+list account=final id=none page=1 seen=none
+list account=default id=none page=1 seen=none
+list account=batch-success id=none page=1 seen=none
+mark account=batch-success id=third page=1 seen=true
+mark account=batch-success id=other page=1 seen=true
+mark account=batch-success id=shared page=1 seen=true
+list account=batch-failure id=none page=1 seen=none
+mark account=batch-failure id=third page=1 seen=true
+mark account=batch-failure id=other page=1 seen=true

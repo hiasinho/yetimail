@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "$YETIMAIL_TEST_PYTHON" "$YETIMAIL_FIXTURE" "$@"

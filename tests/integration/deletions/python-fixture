@@ -1,0 +1,34 @@
+#!/bin/sh
+shift
+operation=$1; shift
+account=default mailbox=Inbox id=none page=1
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --account) account=$2; shift 2 ;;
+        --mailbox=*) mailbox=${1#--mailbox=}; shift ;;
+        --id) id=$2; shift 2 ;;
+        --page) page=$2; shift 2 ;;
+        *) exit 98 ;;
+    esac
+done
+printf '%s|%s|%s|%s|%s\n' "$operation" "$account" "$mailbox" "$id" "$page" >> "$YETIMAIL_CALLS"
+/usr/bin/sleep 0.1
+case "$operation" in
+    list)
+        if [ "$page" = 2 ]; then
+            printf '{"messages":[{"id":"same"}],"page":2,"hasNext":false}\n'
+        else
+            if [ -f "$YETIMAIL_STATE/$account-$mailbox" ]; then first=fill; else first=same; fi
+            printf '{"messages":[{"id":"%s","subject":"%s","unread":true},{"id":"fail"},{"id":"bad"},{"id":"launch"}],"page":1,"hasNext":true}\n' "$first" "$account"
+        fi ;;
+    read) printf '{"id":"%s","body":"offline","attachments":[{"id":"a","openable":true}]}\n' "$id" ;;
+    delete)
+        /usr/bin/sleep 0.2
+        case "$id" in
+            fail) printf '{"error":"Offline delete failed"}\n'; exit 1 ;;
+            bad) printf '{"id":"wrong"}\n' ;;
+            launch) /usr/bin/chmod -x "$0"; printf '{"error":"Launch failure armed"}\n'; exit 1 ;;
+            *) /usr/bin/touch "$YETIMAIL_STATE/$account-$mailbox"; printf '{"id":"%s"}\n' "$id" ;;
+        esac ;;
+    *) exit 98 ;;
+esac

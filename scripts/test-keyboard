@@ -3,7 +3,15 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 omarchy_shell=${OMARCHY_SHELL_PATH:-/usr/share/omarchy/shell}
-quickshell=$(command -v quickshell)
+quickshell=$(command -v quickshell || true)
+if [[ -z $quickshell ]]; then
+    echo "test-keyboard: quickshell is required" >&2
+    exit 2
+fi
+if [[ ! -d $omarchy_shell/Commons || ! -d $omarchy_shell/Ui ]]; then
+    echo "test-keyboard: Omarchy shell not found at $omarchy_shell (set OMARCHY_SHELL_PATH)" >&2
+    exit 2
+fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 ln -s "$omarchy_shell/Commons" "$work/Commons"

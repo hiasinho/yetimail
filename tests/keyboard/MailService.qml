@@ -10,14 +10,23 @@ Item {
     property string config: ""
     property int generation: 0
     property var folderCache: ({})
+    function canonicalFolders() {
+        return [
+            {id: "INBOX", name: "Inbox", role: "inbox"},
+            {id: "Sent", name: "Sent mail", role: "sent"},
+            {id: "Archive", name: "Archive", role: "archive"},
+            {id: "Trash", name: "Trash", role: "trash"},
+            {id: "Projects/2026", name: "Projects / 2026", role: ""}
+        ]
+    }
     function folderCacheKey() { return JSON.stringify([String(config), String(account), !!demo]) }
     function restoreFolders(clearCache) {
         if (clearCache) folderCache = ({})
         var entry = folderCache[folderCacheKey()]
         foldersLoaded = !!(entry && entry.loaded)
-        if (foldersLoaded) folders = entry.folders.slice()
+        folders = foldersLoaded ? entry.folders.slice() : []
     }
-    onConfigChanged: { generation++; restoreFolders(true) }
+    onConfigChanged: { generation++; pendingFolderRole = ""; restoreFolders(true) }
     property bool demo: false
     readonly property string accountLabel: account || "Fixture"
     property var accountLabels: ({alpha: "Personal", beta: "Work"})
@@ -77,21 +86,21 @@ Item {
     property bool foldersLoading: false
     property bool foldersLoaded: false
     property string foldersError: ""
-    property var folders: [
-        {id: "INBOX", name: "Inbox", role: "inbox"},
-        {id: "Sent", name: "Sent mail", role: "sent"},
-        {id: "Archive", name: "Archive", role: "archive"},
-        {id: "Trash", name: "Trash", role: "trash"},
-        {id: "Projects/2026", name: "Projects / 2026", role: ""}
-    ]
+    property string pendingFolderRole: ""
+    property var folders: canonicalFolders()
     function loadFolders() {
+        if (foldersLoading) return
         record("folders")
         foldersError = ""
+        foldersLoading = true
+        if (!folders.length) folders = canonicalFolders()
         foldersLoaded = true
+        foldersLoading = false
         var next = ({})
         Object.keys(folderCache).forEach(function(key) { next[key] = folderCache[key] })
         next[folderCacheKey()] = {loaded: true, folders: folders.slice()}
         folderCache = next
+        retryPendingFolderRole()
     }
     function selectFolder(id) {
         record("folder", id)
@@ -100,15 +109,51 @@ Item {
         folderName = folder ? folder.name : "Inbox"
         populate()
     }
+    function conventionalFolderName(folder) {
+        var name = String(folder.name || "").toLowerCase()
+        var separator = name.lastIndexOf("/")
+        return separator >= 0 ? name.slice(separator + 1) : name
+    }
+    function retryPendingFolderRole() {
+        if (!pendingFolderRole || !foldersLoaded) return
+        var role = pendingFolderRole
+        pendingFolderRole = ""
+        selectFolderRole(role)
+    }
     function selectFolderRole(role) {
+        if (["inbox", "sent", "archive", "trash"].indexOf(role) < 0) return false
         record("role", role)
-        var folder = folders.find(function(item) { return item.role === role })
-        if (folder) selectFolder(folder.id)
-        else foldersError = "Folder role unavailable: " + role
+        if (!foldersLoaded) {
+            pendingFolderRole = role
+            loadFolders()
+            return true
+        }
+        var folder = resolveFolderRole(role)
+        if (folder) { selectFolder(folder.id); return true }
+        if (role === "inbox" && !foldersError) { selectFolder(""); return true }
+        return false
     }
     function resolveFolderRole(role) {
+        foldersError = ""
+        if (["inbox", "sent", "archive", "trash"].indexOf(role) < 0) return null
+        if (!foldersLoaded) {
+            loadFolders()
+            foldersError = "Loading folders. Retry the action when discovery finishes."
+            return null
+        }
         var matches = folders.filter(function(item) { return item.role === role })
-        return matches.length === 1 ? matches[0] : null
+        if (!matches.length) {
+            var names = {inbox: ["inbox"], sent: ["sent", "sent mail", "sent items", "sent messages"],
+                         archive: ["archive", "archives", "all mail"], trash: ["trash", "deleted items", "deleted messages"]}
+            matches = folders.filter(function(item) {
+                return !item.role && names[role].indexOf(conventionalFolderName(item)) >= 0
+            })
+        }
+        if (matches.length === 1) return matches[0]
+        if (!matches.length && role === "inbox") return null
+        foldersError = matches.length ? "More than one " + role + " folder is available. Choose a folder."
+                                      : "No known " + role + " folder is available."
+        return null
     }
     function moveMessageToRole(id, role) { return moveMessagesToRole([id], role) }
     function moveMessagesToRole(ids, role) {
@@ -233,6 +278,50 @@ Item {
         messages = fixtures.slice(0, page * 50)
         return true
     }
-    onAccountChanged: { folderId = ""; folderName = "Inbox"; restoreFolders(false); foldersError = ""; populate() }
+    function resetFixture() {
+        generation = 0
+        folderCache = ({})
+        accountLabels = ({alpha: "Personal", beta: "Work"})
+        accountOverview = []
+        accountOverviewLoading = false
+        accountOverviewError = ""
+        accountLabelSaving = false
+        accountConfigSaving = false
+        accountConfigBlocked = false
+        accountConfigRefreshPending = false
+        accountConfigFenceToken = ""
+        folderId = ""
+        folderName = "Inbox"
+        foldersLoading = false
+        foldersLoaded = false
+        foldersError = ""
+        pendingFolderRole = ""
+        folders = canonicalFolders()
+        loading = false
+        reading = false
+        marking = false
+        listRequest = 0
+        readRequest = 0
+        deleting = false
+        moving = false
+        pendingMoves = 0
+        movePaused = false
+        savingAttachment = false
+        openingAttachment = false
+        attachmentStatus = ""
+        listError = ""
+        readError = ""
+        actionError = ""
+        page = 1
+        loadingMore = false
+        loadMoreError = ""
+        newMessagesAvailable = false
+        deferReads = false
+        pendingReadId = ""
+        calls = []
+        populate()
+        calls = []
+    }
+    onAccountChanged: { pendingFolderRole = ""; folderId = ""; folderName = "Inbox"; restoreFolders(false); foldersError = ""; populate() }
     Component.onCompleted: populate()
 }

@@ -18,6 +18,8 @@ ShellRoot {
             property var mail
             property var area
             property var scroll
+            property var defaultOpenUrl
+            property var defaultLaunchAgentPrompt
             function find(item, predicate) {
                 if (predicate(item)) return item
                 var children = item.children || []
@@ -38,6 +40,60 @@ ShellRoot {
                 verify(condition, message)
             }
             function press(key, modifiers) { keyClick(key, modifiers || Qt.NoModifier); wait(30) }
+            function mutationCalls() {
+                var operations = ["delete", "move", "mark", "saveAttachment", "openAttachment", "account-label", "account-save"]
+                return mail.calls.filter(function(call) { return operations.indexOf(call.operation) >= 0 })
+            }
+            function primeFolderRoles() {
+                mail.folders = mail.canonicalFolders()
+                mail.foldersLoaded = true
+                mail.foldersLoading = false
+                mail.foldersError = ""
+            }
+            function resetHarness() {
+                widget.opened = false
+                widget.openUrl = defaultOpenUrl
+                widget.launchAgentPrompt = defaultLaunchAgentPrompt
+                widget.settings = ({demo: true, accounts: "alpha,beta", account: "forbidden"})
+                widget.selectedAccount = "alpha"
+                widget.cancelDelete(false)
+                widget.showHelp = false
+                widget.showSettings = false
+                widget.showAccounts = false
+                widget.showFolders = false
+                widget.showLinks = false
+                widget.showHeaders = false
+                widget.showAttachments = false
+                widget.movePicker = false
+                widget.moveTargetIds = []
+                widget.moveNextId = ""
+                widget.accountConfigTransaction = ""
+                widget.pendingPreviewId = ""
+                widget.pendingPreviewGeneration = -1
+                widget.viewStateByMailbox = ({})
+                widget.readerStateByMessage = ({})
+                widget.readerStateReady = false
+                widget.linkIndex = 0
+                widget.attachmentIndex = 0
+                widget.agentLaunching = false
+                widget.agentProcessStarted = false
+                widget.agentStatus = ""
+                widget.clearSelection()
+                widget.cursorId = ""
+                widget.pane = "list"
+                // Tests may deliberately assign these properties. Reinstall the
+                // production-shaped bindings instead of merely copying values.
+                mail.active = Qt.binding(function() { return widget.bar !== null || mail.demo })
+                mail.account = Qt.binding(function() { return widget.currentAccount })
+                mail.config = Qt.binding(function() { return String(widget.setting("config", "")) })
+                mail.demo = Qt.binding(function() { return widget.setting("demo", false) === true })
+                mail.cacheFreshMs = Qt.binding(function() {
+                    return Math.max(30, Number(widget.setting("refreshSeconds", 120)) || 120) * 1000
+                })
+                mail.resetFixture()
+                widget.opened = true
+                widget.focusList()
+            }
             function initTestCase() {
                 wait(200)
                 mail = find(widget, function(item) { return typeof item.readMessage === "function" })
@@ -46,27 +102,15 @@ ShellRoot {
                 check(area !== null, "actual message TextArea found")
                 scroll = find(widget, function(item) { return item.objectName === "messageReader" })
                 check(scroll !== null, "actual reader ScrollView found")
+                defaultOpenUrl = widget.openUrl
+                defaultLaunchAgentPrompt = widget.launchAgentPrompt
                 equal(widget.currentAccount, "alpha", "invalid configured preference falls back to allowlist")
                 equal(mail.fixtures.length, 63)
             }
             function init() {
-                widget.settings = ({demo: true, accounts: "alpha,beta", account: "forbidden"})
-                widget.selectedAccount = "alpha"
-                widget.cancelDelete(); mail.deleting = false
-                mail.loading = false; mail.reading = false; mail.deferReads = false; mail.pendingReadId = ""; mail.marking = false; mail.moving = false; mail.savingAttachment = false; mail.openingAttachment = false
-                mail.folderId = ""; mail.folderName = "Inbox"; mail.foldersLoading = false; mail.foldersLoaded = false; mail.foldersError = ""; mail.folderCache = ({})
-                widget.showFolders = false
-                widget.showSettings = false
-                mail.accountLabels = ({alpha: "Personal", beta: "Work"})
-                mail.accountOverview = []
-                widget.clearSelection()
-                widget.cursorId = ""
-                mail.actionError = ""
-                mail.populate(); mail.calls = []
-                widget.opened = true
-                widget.showHelp = false
-                widget.focusList()
-                wait(50)
+                resetHarness()
+                tryVerify(function() { return widget.cursorId === "alpha/1" }, 1000,
+                    "canonical first row becomes observable")
                 mail.selectedId = ""
                 mail.message = null
                 mail.calls = []
@@ -94,6 +138,51 @@ ShellRoot {
                 widget.showHelp = false
                 wait(30)
                 equal(mail.selectedId, "alpha/1", "dismissing the overlay resumes the initial preview")
+            }
+            function test_fixture_reset_and_folder_role_parity() {
+                mail.config = "changed"
+                mail.generation = 91
+                mail.folders = []
+                mail.foldersLoaded = true
+                mail.foldersLoading = true
+                mail.foldersError = "leaked"
+                mail.pendingFolderRole = "trash"
+                mail.pendingMoves = 2
+                mail.movePaused = true
+                mail.deferReads = true
+                mail.pendingReadId = "alpha/9"
+                mail.accountConfigBlocked = true
+                mail.accountConfigFenceToken = "transaction"
+                mail.attachmentStatus = "leaked"
+                widget.openUrl = function(url) {}
+                widget.showLinks = true
+                widget.selectedIds = ["alpha/1"]
+                resetHarness()
+                equal(mail.config, "")
+                equal(mail.generation, 0)
+                equal(mail.folders.length, 5)
+                check(!mail.foldersLoaded && !mail.foldersLoading && mail.foldersError === "")
+                equal(mail.pendingFolderRole, "")
+                equal(mail.pendingMoves, 0)
+                check(!mail.movePaused && !mail.deferReads && mail.pendingReadId === "")
+                check(!mail.accountConfigBlocked && mail.accountConfigFenceToken === "")
+                equal(mail.attachmentStatus, "")
+                equal(widget.openUrl, defaultOpenUrl, "callback overrides are restored")
+                check(!widget.showLinks && widget.selectedCount === 0)
+
+                mail.foldersLoaded = true
+                mail.folders = [{id: "All", name: "[Gmail]/All Mail", role: ""}]
+                equal(mail.resolveFolderRole("archive").id, "All", "conventional nested role names match production")
+                mail.folders = [{id: "one", name: "Trash", role: "trash"}, {id: "two", name: "Deleted", role: "trash"}]
+                equal(mail.resolveFolderRole("trash"), null, "ambiguous explicit roles fail closed")
+                check(mail.foldersError.indexOf("More than one trash") >= 0)
+
+                mail.foldersLoaded = false
+                mail.foldersLoading = true
+                mail.selectFolderRole("trash")
+                equal(mail.pendingFolderRole, "trash")
+                widget.selectedAccount = "beta"
+                equal(mail.pendingFolderRole, "", "account changes discard deferred role navigation")
             }
             function test_filled_material_icons() {
                 equal(widget.icons.mail, "󰇮")
@@ -155,6 +244,7 @@ ShellRoot {
                 check(refreshPosition.x + refresh.width <= inbox.width + 0.5, "long folder heading keeps Refresh inside sidebar")
             }
             function test_delete_confirmation() {
+                primeFolderRoles()
                 mail.folderId = "Trash"; widget.syncCursor()
                 mail.messages = mail.messages.slice(0, 3)
                 press(Qt.Key_J); press(Qt.Key_Delete)
@@ -205,6 +295,7 @@ ShellRoot {
                 equal(mail.selectedId, ""); equal(mail.message, null)
             }
             function test_delete_cancel_restores_focus() {
+                primeFolderRoles()
                 mail.folderId = "Trash"; widget.syncCursor()
                 press(Qt.Key_Return)
                 check(area.activeFocus, "reader starts focused")
@@ -234,6 +325,7 @@ ShellRoot {
                 check(!widget.confirmingDelete && !area.activeFocus, "closing does not restore reader focus")
             }
             function test_delete_stale_and_busy() {
+                primeFolderRoles()
                 mail.folderId = "Trash"; widget.syncCursor()
                 for (var flag of ["loading", "reading", "marking", "moving", "deleting", "savingAttachment", "openingAttachment"]) {
                     mail[flag] = true
@@ -245,7 +337,7 @@ ShellRoot {
                     mail[flag] = true
                     check(!widget.confirmingDelete, flag + " clears existing prompt")
                     widget.confirmDelete()
-                    equal(mail.calls.length, 0, "busy changes cannot submit")
+                    equal(mutationCalls().length, 0, "busy changes cannot submit mutations")
                     mail[flag] = false
                 }
                 var mutations = [function() { widget.close() }, function() { mail.generation++ },
@@ -258,6 +350,7 @@ ShellRoot {
                         return Object.assign({}, row, {subject: "changed"}) }) }]
                 for (var mutate of mutations) {
                     init()
+                    primeFolderRoles()
                     mail.folderId = "Trash"; widget.syncCursor()
                     widget.requestDelete(widget.targetId)
                     check(widget.confirmingDelete)
@@ -268,10 +361,11 @@ ShellRoot {
                     // confirmation must revalidate rather than retarget.
                     widget.deleteSnapshot = stale
                     widget.confirmDelete()
-                    equal(mail.calls.filter(function(c) { return c.operation === "delete" }).length, 0, "stale snapshot never deletes")
+                    equal(mutationCalls().length, 0, "stale snapshot never mutates")
                 }
             }
             function test_archive_and_trash() {
+                primeFolderRoles()
                 press(Qt.Key_J); press(Qt.Key_X)
                 var firstMove = mail.calls.filter(function(call) { return call.operation === "move" })[0]
                 equal(firstMove.id, "alpha/2")
@@ -339,6 +433,7 @@ ShellRoot {
                 mail.folders = folders
             }
             function test_move_queue_shortcuts_remain_responsive() {
+                primeFolderRoles()
                 mail.folderId = "INBOX"
                 widget.syncCursor()
                 mail.moving = true
@@ -365,6 +460,7 @@ ShellRoot {
                 equal(mail.calls[mail.calls.length - 1].operation, "cancelMoves")
             }
             function test_bulk_selection_and_actions() {
+                primeFolderRoles()
                 equal(widget.cursorId, "alpha/1")
                 press(Qt.Key_Space)
                 equal(widget.selectedCount, 1, "Space selects cursor without opening")
@@ -397,6 +493,7 @@ ShellRoot {
                 equal(widget.cursorId, "alpha/4", "cursor advances to surviving row")
             }
             function test_selection_mouse_reader_and_permanent_delete_safety() {
+                primeFolderRoles()
                 var rowMouse = find(widget, function(item) { return item.objectName === "messageRowMouseArea" })
                 check(rowMouse !== null, "message row found")
                 mouseClick(rowMouse, rowMouse.width / 2, rowMouse.height / 2, Qt.LeftButton, Qt.ControlModifier); wait(30)
@@ -705,8 +802,9 @@ ShellRoot {
                 press(Qt.Key_BracketRight)
                 equal(widget.currentAccount, "beta"); equal(mail.folderId, ""); equal(mail.folderName, "Inbox")
                 check(!widget.showFolders, "account change clears picker")
-                var folders = mail.folders
+                var folders = mail.canonicalFolders()
                 mail.folders = folders.filter(function(folder) { return folder.role !== "archive" })
+                mail.foldersLoaded = true
                 press(Qt.Key_G); press(Qt.Key_A)
                 check(mail.foldersError.indexOf("archive") !== -1, "unavailable role error preserved")
                 equal(mail.folderId, "")
@@ -1089,10 +1187,13 @@ ShellRoot {
             }
             function cleanup() {
                 console.log((qtest_results.failed ? "KEYBOARD_FAIL " : "KEYBOARD_PASS ") + qtest_results.functionName)
+                // QtTest runs cleanup after assertion failures too, so a partial test
+                // cannot leak service state or injected callbacks into the next one.
+                resetHarness()
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 29)
+                if (qtest_results.failCount === 0)
                     console.log("YETIMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

@@ -30,6 +30,7 @@ FocusScope {
     signal retryRequested()
     signal saveLabelRequested(string accountId, string label)
     signal enabledRequested(string accountId, bool enabled)
+    signal reorderRequested(string accountId, int offset)
     signal saveConfigRequested(string accountId, string revision, string email, string displayName,
                                bool makeDefault, string inbox, string sent, string drafts,
                                string trash, string archive)
@@ -53,6 +54,13 @@ FocusScope {
     }
     function enabledCount() {
         return safeAccounts.filter(function(account) { return accountEnabled(account) }).length
+    }
+    function allowedIndex(account) {
+        return allowedAccounts.indexOf(accountId(account))
+    }
+    function canReorder(account, offset) {
+        var index = allowedIndex(account)
+        return allowedAccounts.length > 1 && index >= 0 && index + offset >= 0 && index + offset < allowedAccounts.length
     }
     function mailbox(account, role) {
         var values = account && account["mailbox-mappings"] && typeof account["mailbox-mappings"] === "object" ? account["mailbox-mappings"] : ({})
@@ -101,6 +109,12 @@ FocusScope {
         return changed
     }
     function configDirty() { return changedFields().length > 0 }
+    function submitConfiguration(makeDefaultValue) {
+        saveConfigRequested(accountId(selectedAccount), editorRevision,
+            emailField.text.trim(), displayNameField.text.trim(), makeDefaultValue,
+            inboxField.text.trim(), sentField.text.trim(), draftsField.text.trim(),
+            trashField.text.trim(), archiveField.text.trim())
+    }
     function backendText(value) {
         var entries = Array.isArray(value) ? value : []
         return entries.length ? entries.map(function(entry) { return String(entry).toUpperCase() }).join(" · ") : "Not configured"
@@ -253,6 +267,30 @@ FocusScope {
                                     : "This account ID cannot be represented in the comma-separated allowlist"
                                 onClicked: view.enabledRequested(view.accountId(view.selectedAccount), !view.accountEnabled(view.selectedAccount))
                             }
+                            MailLabel { text: "Dropdown order"; opacity: 0.55 }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+                                MailLabel {
+                                    Layout.fillWidth: true
+                                    text: view.allowedIndex(view.selectedAccount) >= 0
+                                        ? String(view.allowedIndex(view.selectedAccount) + 1) + " of " + String(view.allowedAccounts.length)
+                                        : "Enable account to order"
+                                    opacity: 0.65
+                                }
+                                MailButton {
+                                    objectName: "moveAccountUpButton"
+                                    text: "Move up"
+                                    enabled: !view.locked && view.canReorder(view.selectedAccount, -1)
+                                    onClicked: view.reorderRequested(view.accountId(view.selectedAccount), -1)
+                                }
+                                MailButton {
+                                    objectName: "moveAccountDownButton"
+                                    text: "Move down"
+                                    enabled: !view.locked && view.canReorder(view.selectedAccount, 1)
+                                    onClicked: view.reorderRequested(view.accountId(view.selectedAccount), 1)
+                                }
+                            }
                         }
                         RowLayout {
                             Layout.fillWidth: true
@@ -287,7 +325,7 @@ FocusScope {
                                     : view.makeDefault ? "Will become default" : "Make default"
                                 enabled: !view.locked && !!view.selectedAccount && view.selectedAccount.editable === true
                                     && !view.selectedAccount.default && !view.makeDefault
-                                onClicked: view.makeDefault = true
+                                onClicked: view.submitConfiguration(true)
                             }
                             MailLabel { text: "Backends"; opacity: 0.55 }
                             MailLabel { Layout.fillWidth: true; text: "Receive: " + view.backendText(view.selectedAccount ? view.selectedAccount.receiving : []) + "\nSend: " + view.backendText(view.selectedAccount ? view.selectedAccount.sending : []); wrapMode: Text.WordWrap }
@@ -336,10 +374,7 @@ FocusScope {
                                 text: view.configSaving ? "Saving…" : "Save configuration"
                                 enabled: !view.locked && !!view.selectedAccount && view.selectedAccount.editable === true
                                     && (view.configDirty() || view.makeDefault)
-                                onClicked: view.saveConfigRequested(view.accountId(view.selectedAccount), view.editorRevision,
-                                    emailField.text.trim(), displayNameField.text.trim(), view.makeDefault,
-                                    inboxField.text.trim(), sentField.text.trim(), draftsField.text.trim(),
-                                    trashField.text.trim(), archiveField.text.trim())
+                                onClicked: view.submitConfiguration(view.makeDefault)
                             }
                         }
                     }

@@ -290,6 +290,26 @@ BarWidget {
             bar.shell.updateEntryInline(moduleName, updated)
         settings = updated
     }
+    function reorderAllowedAccount(accountId, offset) {
+        accountId = String(accountId || "")
+        offset = Number(offset)
+        if (!accountId || (offset !== -1 && offset !== 1)) return
+        var next = accounts.slice()
+        var index = next.indexOf(accountId)
+        var target = index + offset
+        if (index < 0 || target < 0 || target >= next.length) return
+        var swapped = next[target]
+        next[target] = next[index]
+        next[index] = swapped
+        var updated = Object.assign({}, settings || ({}))
+        updated.accounts = next.join(",")
+        // Keep the active account stable when it was selected only by being
+        // first in the allowlist rather than by the explicit account setting.
+        selectedAccount = currentAccount
+        if (bar && bar.shell && typeof bar.shell.updateEntryInline === "function")
+            bar.shell.updateEntryInline(moduleName, updated)
+        settings = updated
+    }
     function accountConfigSafeAcrossInstances() {
         var items = bar && typeof bar.moduleWidgets === "function" ? bar.moduleWidgets(moduleName) : [root]
         return items.every(function(item) {
@@ -1083,6 +1103,7 @@ BarWidget {
                 onRetryRequested: mail.loadAccountOverview()
                 onSaveLabelRequested: function(accountId, label) { mail.saveAccountLabel(accountId, label) }
                 onEnabledRequested: function(accountId, enabled) { root.saveAllowedAccount(accountId, enabled) }
+                onReorderRequested: function(accountId, offset) { root.reorderAllowedAccount(accountId, offset) }
                 onSaveConfigRequested: function(accountId, revision, email, displayName, makeDefault, inbox, sent, drafts, trash, archive) {
                     root.saveAccountConfiguration(accountId, revision, email, displayName, makeDefault, inbox, sent, drafts, trash, archive)
                 }

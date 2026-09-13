@@ -108,7 +108,7 @@ ShellRoot {
                 var refresh = find(widget, function(item) { return item.objectName === "inboxRefreshButton" })
                 check(title !== null && footer !== null && panel !== null && inbox !== null && refresh !== null, "inbox chrome found")
                 equal(inbox.width, 310, "message list keeps a fixed width")
-                equal(title.text, "INBOX / DEMO", "heading names current folder")
+                equal(title.text, "PERSONAL / INBOX / DEMO", "heading names current account and folder")
                 equal(footer.text, "50 unread · 50 loaded", "footer reports the loaded working set")
                 equal(help.text, "?", "shortcut help stays compact")
                 var fullPageHeight = panel.contentHeight
@@ -120,7 +120,7 @@ ShellRoot {
                 equal(panel.contentHeight, fullPageHeight, "short mailbox page keeps a fixed panel height")
                 mail.folderName = "Projects / 2026"
                 wait(30)
-                equal(title.text, "PROJECTS / 2026 / DEMO", "heading follows folder navigation")
+                equal(title.text, "PERSONAL / PROJECTS / 2026 / DEMO", "heading follows folder navigation")
                 mail.folderName = "A very long folder name that must not displace refresh"
                 wait(30)
                 var refreshPosition = refresh.mapToItem(inbox, 0, 0)
@@ -454,14 +454,16 @@ ShellRoot {
                 var field = find(widget, function(item) { return item.objectName === "accountLabelField" })
                 var save = find(widget, function(item) { return item.objectName === "saveAccountLabelButton" })
                 var enabled = find(widget, function(item) { return item.objectName === "accountEnabledButton" })
+                var moveUp = find(widget, function(item) { return item.objectName === "moveAccountUpButton" })
+                var moveDown = find(widget, function(item) { return item.objectName === "moveAccountDownButton" })
                 var email = find(widget, function(item) { return item.objectName === "accountEmailField" })
                 var sender = find(widget, function(item) { return item.objectName === "accountDisplayNameField" })
                 var inboxMapping = find(widget, function(item) { return item.objectName === "accountInboxField" })
                 var makeDefault = find(widget, function(item) { return item.objectName === "accountDefaultButton" })
                 var saveConfig = find(widget, function(item) { return item.objectName === "saveAccountConfigButton" })
                 var settings = find(widget, function(item) { return item.objectName === "accountSettings" })
-                check(list !== null && field !== null && save !== null && enabled !== null && email !== null
-                    && sender !== null && inboxMapping !== null && makeDefault !== null && saveConfig !== null && settings !== null,
+                check(list !== null && field !== null && save !== null && enabled !== null && moveUp !== null && moveDown !== null
+                    && email !== null && sender !== null && inboxMapping !== null && makeDefault !== null && saveConfig !== null && settings !== null,
                     "account editor controls found")
                 equal(list.count, 3, "overview includes configured accounts outside the mail allowlist")
                 var overview = mail.accountOverview
@@ -475,6 +477,17 @@ ShellRoot {
                 widget.saveAllowedAccount("configured-only", true)
                 wait(30)
                 equal(email.text, "new-beta@example.test", "mail access changes preserve unsaved configuration fields")
+                widget.selectedAccount = ""
+                widget.reorderAllowedAccount("alpha", 1); wait(30)
+                equal(widget.currentAccount, "alpha", "reordering preserves an account selected by allowlist fallback")
+                check(widget.showSettings, "reordering does not dismiss settings")
+                widget.reorderAllowedAccount("alpha", -1); wait(30)
+                check(moveUp.enabled && moveDown.enabled, "middle enabled account can move in either direction")
+                moveUp.clicked(); wait(30)
+                equal(widget.accounts.join(","), "beta,alpha,configured-only", "move up changes dropdown order")
+                check(!moveUp.enabled && moveDown.enabled, "order controls update at the list boundary")
+                moveDown.clicked(); wait(30)
+                equal(widget.accounts.join(","), "alpha,beta,configured-only", "move down changes dropdown order")
                 field.text = "Pending Beta Label"
                 var refreshed = mail.accountOverview.map(function(item) {
                     if (item.id !== "beta") return item
@@ -491,12 +504,14 @@ ShellRoot {
                     "preserved drafts retain their stale-write revision")
                 equal(inboxMapping.text, "", "an external mapping is not merged invisibly into a draft")
                 sender.text = "New Beta Sender"
+                before = mail.calls.length
                 makeDefault.clicked()
-                saveConfig.clicked()
                 wait(30)
+                equal(mail.calls.length, before + 1, "making an account default saves immediately")
+                equal(mail.calls[mail.calls.length - 1].operation, "account-save")
                 equal(mail.accountOverview[1].email, "new-beta@example.test", "identity edits reach the service")
                 check(mail.accountOverview[1].default && !mail.accountOverview[0].default, "default edit remains unique")
-                equal(mail.calls[mail.calls.length - 1].operation, "account-save")
+                equal(makeDefault.text, "Default account", "saved default state is visible")
                 settings.focusAccount("configured-only")
                 check(!email.enabled, "unsupported configurations remain read-only")
                 check(widget.accounts.indexOf("configured-only") >= 0, "mail access updates the persisted allowlist state")

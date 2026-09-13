@@ -119,7 +119,7 @@ ColumnLayout {
         objectName: "currentFolderTitle"
         Layout.fillWidth: true
         Layout.minimumWidth: 0
-        text: (view.folderName || "Mail").toUpperCase() + (view.demo ? " / DEMO" : "")
+        text: ((view.accountLabel || view.currentAccount || "Mail") + " / " + (view.folderName || "Inbox") + (view.demo ? " / Demo" : "")).toUpperCase()
         font.pixelSize: 10
         font.letterSpacing: 1.5
         opacity: 0.55

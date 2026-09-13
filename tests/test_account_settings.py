@@ -90,6 +90,20 @@ root-dir="PRIVATE_PATH"
             self.assertEqual(self.invoke("accounts")[1]["accounts"][0]["display-name"], "Merged")
         self.assertFalse(self.label_file.parent.exists())
 
+    def test_default_config_symlink_with_parent_traversal_is_read_only(self):
+        default = self.config_home / "himalaya/config.toml"
+        default.parent.mkdir(parents=True)
+        other = self.home / "other"
+        (other / "deep").mkdir(parents=True)
+        actual = other / "mail.toml"
+        actual.write_bytes(self.config.read_bytes())
+        (default.parent / "mail.toml").write_bytes(self.config.read_bytes())
+        (default.parent / "jump").symlink_to(other / "deep", target_is_directory=True)
+        default.symlink_to(default.parent / "jump/../mail.toml")
+        response = self.invoke("accounts")
+        self.assertEqual(response[0], 0)
+        self.assertFalse(response[1]["accounts"][0]["editable"])
+
     def test_malformed_configs_are_generic_and_do_not_leak(self):
         for content in ('PRIVATE_SECRET invalid', 'accounts="PRIVATE_SECRET"', '[accounts]\nwork=1',
                         '[accounts.work]\nemail=5', '[accounts.work]\ndefault="PRIVATE_SECRET"',
@@ -362,14 +376,23 @@ email = "personal@example.test"
                                           {role: '' for role in settings.ROLES}, str(self.config))
                 self.assertEqual(self.config.read_text(), raw)
 
-    def test_unsafe_files_and_parent(self):
+    def test_safe_file_symlink_and_unsafe_files_and_parent(self):
         original = self.config.read_bytes()
         target = self.home / 'target'
         target.write_bytes(original)
         self.config.unlink()
         self.config.symlink_to(target)
+        self.assertTrue(self.overview()[1]['accounts'][0]['editable'])
+        self.save()
+        self.assertTrue(self.config.is_symlink())
+        self.assertEqual(settings.tomllib.loads(target.read_text())['accounts']['work']['email'], 'new@example.test')
+        self.config.unlink()
+        linked_directory = self.home / 'linked-directory'
+        linked_directory.symlink_to(self.home, target_is_directory=True)
+        self.config.symlink_to(linked_directory / target.name)
         self.assertFalse(self.overview()[1]['accounts'][0]['editable'])
         self.config.unlink()
+        linked_directory.unlink()
         os.link(target, self.config)
         self.assertFalse(self.overview()[1]['accounts'][0]['editable'])
         self.config.unlink()

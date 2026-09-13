@@ -261,17 +261,7 @@ EDIT_ERROR = "Cannot edit this Himalaya configuration safely."
 SAVE_ERROR = "Cannot save account settings safely; reopen Settings and try again."
 
 
-def _config_directory(explicit):
-    paths = config_paths(explicit)
-    if len(paths) != 1:
-        raise ValueError()
-    path = paths[0]
-    value = explicit if explicit is not None else os.environ.get("HIMALAYA_CONFIG")
-    if value is not None:
-        # config_paths resolves links. Retain the original spelling to reject them.
-        original = Path(os.path.abspath(os.path.expanduser(os.path.expandvars(value))))
-        if original != path:
-            raise ValueError()
+def _config_parent(path):
     if not path.is_absolute() or ".." in path.parts:
         raise ValueError()
     directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
@@ -286,10 +276,46 @@ def _config_directory(explicit):
         info = os.fstat(directory)
         if info.st_uid != os.getuid() or info.st_mode & 0o022:
             raise ValueError()
-        return directory, path.name
+        return directory
     except BaseException:
         os.close(directory)
         raise
+
+
+def _config_directory(explicit):
+    paths = config_paths(explicit)
+    if len(paths) != 1:
+        raise ValueError()
+    path = paths[0]
+    value = explicit if explicit is not None else os.environ.get("HIMALAYA_CONFIG")
+    original = (Path(os.path.abspath(os.path.expanduser(os.path.expandvars(value))))
+                if value is not None else path)
+
+    # Dotfile managers commonly make config.toml itself a symlink. Validate its
+    # containing directory without following links, then edit the resolved,
+    # owner-controlled regular target. Symlinked directories stay rejected.
+    original_directory = _config_parent(original)
+    try:
+        info = os.stat(original.name, dir_fd=original_directory, follow_symlinks=False)
+        if stat.S_ISLNK(info.st_mode):
+            if info.st_uid != os.getuid():
+                raise ValueError()
+            link = Path(os.readlink(original.name, dir_fd=original_directory))
+            if ".." in link.parts:
+                raise ValueError()
+            target = link if link.is_absolute() else original.parent / link
+            target = Path(os.path.abspath(target))
+            # Explicit paths were canonicalized by config_paths. A mismatch
+            # means the target traversed another symlink, which we do not trust.
+            if value is not None and target != path:
+                raise ValueError()
+            path = target
+        elif original != path:
+            raise ValueError()
+    finally:
+        os.close(original_directory)
+
+    return _config_parent(path), path.name
 
 
 def _read_config(directory, name):

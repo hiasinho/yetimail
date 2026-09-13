@@ -12,9 +12,10 @@ The process has an empty executable search path and a hard timeout.
 QtTest `keyClick` delivers actual Qt key events to the offscreen FloatingWindow:
 these tests exercise real `Shortcut` resolution, including while the production
 reader TextArea owns active focus. No desktop key injection is involved. Assertions
-cover cursor limits, Enter without automatic seen, reader scrolling and half-pages,
-gg/G, h/Escape, Tab/Shift+Tab, page boundaries and resets, account allowlisting and
-cycling, list-versus-reader mark targets, busy guards, help and closed shortcuts.
+cover cursor limits, automatic latest-cursor preview without marking seen, reader
+scrolling and half-pages, gg/G, h/Escape, Tab/Shift+Tab, page boundaries and resets,
+account allowlisting and cycling, list-versus-reader mark targets, busy guards, help
+and closed shortcuts.
 
 Quickshell does not install QtTest's CLI reporter. The test explicitly emits
 assertion failures, per-test status, and QtTest result counts; the runner requires

@@ -38,8 +38,8 @@ Rectangle {
             }
             Repeater {
                 model: [
-                    ["j k / ↓ ↑", "Move / scroll"],
-                    ["Enter / l / →", "Open message / link"],
+                    ["j k / ↓ ↑", "Preview next / previous · scroll"],
+                    ["Enter / l / →", "Focus message / open link"],
                     ["Space", "Toggle message selection (list)"],
                     ["Ctrl+a", "Select current page (list)"],
                     ["h / ←", "Back to body / list"],

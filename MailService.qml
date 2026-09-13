@@ -255,8 +255,14 @@ Item {
         attachmentProcess.command = command("save").concat(["--id", selectedId, "--attachment", id])
         attachmentProcess.running = true
     }
+    // Himalaya remains page-based internally, while the UI renders all
+    // contiguous chunks as one list.
     property int page: 1
     property bool hasNext: false
+    property bool loadingMore: false
+    property string loadMoreError: ""
+    property var loadedPageValues: ({})
+    property int cacheFreshMs: 120000
     // marking stays latched across the whole serial batch, including deferred launches.
     property bool marking: false
     property bool markInFlight: false
@@ -392,32 +398,108 @@ Item {
     }
 
     function visibleList(c) {
-        return active && validListContext(c) && c.key === visibleListKey
+        return active && validListContext(c) && c.config === config && c.account === account
+            && c.demo === demo && c.folder === folderId
     }
 
     function storePage(c, data) {
         if (!validListContext(c)) return
         var next = Object.assign({}, pageSnapshots)
-        next[c.key] = {context: c, value: JSON.parse(JSON.stringify(data))}
+        next[c.key] = {context: c, value: JSON.parse(JSON.stringify(data)), storedAt: Date.now()}
         var order = snapshotOrder.filter(function(key) { return key !== c.key }).concat([c.key])
         while (order.length > Math.max(1, snapshotLimit)) delete next[order.shift()]
         pageSnapshots = next
         snapshotOrder = order
     }
 
-    function showPage(c, data) {
-        messages = data.messages.map(function(m) {
-            var row = Object.assign({}, m)
-            if (c.demo && Object.prototype.hasOwnProperty.call(demoSeen, row.id)) row.unread = !demoSeen[row.id]
-            return row
-        })
-        page = data.page === undefined ? c.page : data.page
-        hasNext = data.hasNext === undefined ? messages.length >= 50 : !!data.hasNext
-        accountLabel = data.account || c.account || "Default account"
+    function normalizedPage(c, data) {
+        return {
+            messages: data.messages.map(function(m) {
+                var row = Object.assign({}, m)
+                if (c.demo && Object.prototype.hasOwnProperty.call(demoSeen, row.id)) row.unread = !demoSeen[row.id]
+                return row
+            }),
+            page: data.page === undefined ? c.page : data.page,
+            hasNext: data.hasNext === undefined ? data.messages.length >= 50 : !!data.hasNext,
+            account: data.account || c.account || "Default account"
+        }
+    }
+
+    function sameMessageOrder(left, right) {
+        if (!left || left.messages.length !== right.messages.length) return false
+        for (var i = 0; i < left.messages.length; ++i)
+            if (String(left.messages[i].id) !== String(right.messages[i].id)) return false
+        return true
+    }
+
+    function rebuildContinuousMessages() {
+        var rows = []
+        var seen = ({})
+        var last = 0
+        while (loadedPageValues[last + 1]) {
+            last++
+            loadedPageValues[last].messages.forEach(function(row) {
+                var id = String(row.id)
+                if (Object.prototype.hasOwnProperty.call(seen, id)) return
+                seen[id] = true
+                rows.push(Object.assign({}, row))
+            })
+        }
+        messages = rows
+        page = Math.max(1, last)
+        hasNext = last > 0 && !!loadedPageValues[last].hasNext
+        if (last > 0) accountLabel = loadedPageValues[1].account
         var views = Object.assign({}, preferredPages)
-        views[mailboxViewKey(c.account, c.folder)] = page
+        views[mailboxViewKey(account, folderId)] = page
         preferredPages = views
         loading = false
+        loadingMore = false
+    }
+
+    function showPage(c, data) {
+        var value = normalizedPage(c, data)
+        var next = Object.assign({}, loadedPageValues)
+        // Numbered IMAP pages shift when newer mail arrives. Never combine a
+        // changed first chunk with tails from an older generation.
+        if (c.page === 1 && next[1] && !sameMessageOrder(next[1], value)) next = ({})
+        next[c.page] = value
+        loadedPageValues = next
+        rebuildContinuousMessages()
+        loadMoreError = ""
+    }
+
+    function messagePage(id) {
+        var pages = Object.keys(loadedPageValues)
+        for (var i = 0; i < pages.length; ++i) {
+            var number = Number(pages[i])
+            if (loadedPageValues[number].messages.some(function(row) { return String(row.id) === String(id) })) return number
+        }
+        return 1
+    }
+
+    function patchLoadedMessage(id, seen) {
+        var next = Object.assign({}, loadedPageValues)
+        Object.keys(next).forEach(function(key) {
+            var value = next[key]
+            next[key] = Object.assign({}, value, {messages: value.messages.map(function(row) {
+                return String(row.id) === String(id) ? Object.assign({}, row, {unread: !seen}) : row
+            })})
+        })
+        loadedPageValues = next
+    }
+
+    function restoreLoadedPages() {
+        var restored = ({})
+        var remembered = Math.max(1, Number(preferredPages[mailboxViewKey(account, folderId)]) || 1)
+        for (var number = 1; number <= remembered; ++number) {
+            var c = listContext(account, folderId, number)
+            var cached = pageSnapshots[c.key]
+            if (!cached || !validListContext(cached.context)) break
+            restored[number] = normalizedPage(c, cached.value)
+            if (!restored[number].hasNext) break
+        }
+        loadedPageValues = restored
+        if (restored[1]) rebuildContinuousMessages()
     }
 
     // Conservative account-wide fencing covers configured Inbox aliases and
@@ -479,7 +561,7 @@ Item {
                 || (!root.demo && root.allowedWarmAccounts.indexOf(job.context.account) >= 0))
         })
         if (!queue.length) { listQueue = []; return }
-        var index = queue.findIndex(function(job) { return job.context.key === root.visibleListKey })
+        var index = queue.findIndex(function(job) { return root.visibleList(job.context) })
         if (index < 0) index = queue.findIndex(function(job) { return job.foreground })
         if (index < 0) index = 0
         var job = queue.splice(index, 1)[0]
@@ -514,16 +596,17 @@ Item {
                     storePage(c, data)
                     if (current) { showPage(c, data); refreshing = job.probe }
                 }
-            } catch (e) { if (current && !job.probe) listError = e.message }
+            } catch (e) {
+                if (current && !job.probe) {
+                    if (c.page > 1) { loadMoreError = e.message; loadingMore = false }
+                    else listError = e.message
+                }
+            }
             if (job.probe) queueList(c, false, current)
             else if (current) {
                 loading = false
+                loadingMore = false
                 refreshing = false
-                // Adjacent pages warm after the visible page, without changing it.
-                var previous = c.page > 1 ? listContext(c.account, c.folder, c.page - 1) : null
-                var following = data && data.hasNext === true ? listContext(c.account, c.folder, c.page + 1) : null
-                if (previous && !pageSnapshots[previous.key]) queueList(previous, false, true)
-                if (following && !pageSnapshots[following.key]) queueList(following, false, true)
             }
         }
         Qt.callLater(startListJob)
@@ -755,7 +838,7 @@ Item {
     function resumeAccountConfig() {
         if (accountConfigBlocked || !accountConfigRefreshPending) return
         accountConfigRefreshPending = false
-        if (ready && active) fetchPage(page)
+        if (ready && active) fetchPage(1, true)
     }
 
     function invalidatePrefetch() {
@@ -812,9 +895,11 @@ Item {
         actionError = ""
         attachmentStatus = ""
         cancelAttachmentOpen()
-        var rememberedPage = Number(preferredPages[mailboxViewKey(account, folderId)]) || 1
-        page = Math.max(1, Math.floor(rememberedPage))
+        page = 1
         hasNext = false
+        loadedPageValues = ({})
+        loadingMore = false
+        loadMoreError = ""
         demoSeen = ({})
         accountLabel = account || "Default account"
         loading = false
@@ -822,28 +907,39 @@ Item {
         visibleListKey = ""
         listQueue = listQueue.filter(function(job) { return !job.foreground })
         // Memory restoration is synchronous even while another account is fetching.
-        if (ready && active && !deferFetch) fetchPage(page)
-    }
-
-    function refresh() { fetchPage(page) }
-
-    function nextPage() {
-        if (hasNext) fetchPage(page + 1)
-    }
-
-    function previousPage() {
-        if (page > 1) fetchPage(page - 1)
-    }
-
-    function fetchPage(target) {
-        if (!ready || !active || accountConfigBlocked || loading || deleting || movePending || marking || (reading && readGeneration === generation && target !== page)) return
-        if (target !== page) {
-            invalidatePrefetch()
-            selectedId = ""
-            message = null
-            readError = ""
+        if (ready && active && !deferFetch) {
+            restoreLoadedPages()
+            var first = listContext(account, folderId, 1)
+            var cached = pageSnapshots[first.key]
+            var fresh = cached && validListContext(cached.context) && Date.now() - Number(cached.storedAt || 0) < cacheFreshMs
+            if (!fresh) fetchPage(1, false)
         }
-        listError = ""
+    }
+
+    function refresh() { fetchPage(1, true) }
+
+    function loadMore() {
+        if (!hasNext || loadingMore || loadMoreError || loading || deleting || movePending || marking) return false
+        fetchPage(page + 1, false)
+        return true
+    }
+
+    function retryLoadMore() {
+        if (!loadMoreError) return false
+        loadMoreError = ""
+        fetchPage(page + 1, true)
+        return true
+    }
+
+    // Compatibility alias for existing keyboard integrations.
+    function nextPage() { return loadMore() }
+    function previousPage() {}
+
+    function fetchPage(target, force) {
+        if (!ready || !active || accountConfigBlocked || loading || deleting || movePending || marking
+            || (target > 1 && loadingMore)) return
+        listError = target === 1 ? "" : listError
+        loadMoreError = target > 1 ? "" : loadMoreError
         actionError = ""
         requestedPage = target
         listGeneration = generation
@@ -852,9 +948,19 @@ Item {
         visibleListKey = c.key
         var cached = pageSnapshots[c.key]
         if (cached && !validListContext(cached.context)) cached = null
-        loading = !cached && !(target === page && messages.length)
-        refreshing = !loading
-        if (cached) { showPage(c, cached.value); refreshing = true }
+        if (target === 1) {
+            loading = !messages.length && !cached
+            refreshing = !loading
+        } else loadingMore = true
+        if (cached) {
+            showPage(c, cached.value)
+            if (!force && Date.now() - Number(cached.storedAt || 0) < cacheFreshMs) {
+                refreshing = false
+                return
+            }
+            if (target === 1) refreshing = true
+            else loadingMore = true
+        }
         queueList(c, !cached && !demo && !(accountEpochs[c.scope] || 0), true)
     }
 
@@ -872,7 +978,7 @@ Item {
             return false
         }
         if (!validMessageIds(ids)) {
-            actionError = "Messages must be unique IDs on the current page."
+            actionError = "Messages must be unique IDs in the loaded list."
             return false
         }
         var pending = ids.filter(function(id) {
@@ -903,7 +1009,7 @@ Item {
             Qt.callLater(refresh)
             return
         }
-        markContext = listContext(account, folderId, page)
+        markContext = listContext(account, folderId, messagePage(entry.id))
         fenceLists(markContext, false)
         markId = entry.id
         markSeen = entry.seen
@@ -939,11 +1045,11 @@ Item {
             return false
         }
         if (typeof id !== "string" || !id.trim() || !messages.some(function(m) { return m.id === id })) {
-            actionError = "Message is not on the current page."
+            actionError = "Message is not in the loaded list."
             return false
         }
         invalidatePrefetch()
-        deleteContext = listContext(account, folderId, page)
+        deleteContext = listContext(account, folderId, messagePage(id))
         fenceLists(deleteContext, true)
         deleteGeneration = generation
         deleteAccount = account
@@ -971,7 +1077,7 @@ Item {
 
     function moveCurrent(entry) {
         return entry && active && entry.generation === generation && entry.account === account
-            && entry.config === config && entry.folder === folderId && entry.page === page
+            && entry.config === config && entry.folder === folderId
     }
 
     function hideMoveEntry(entry) {
@@ -1062,10 +1168,12 @@ Item {
     }
 
     function reconcileMoves(entry) {
-        var target = !messages.length && page > 1 ? page - 1 : page
         Qt.callLater(function() {
             if (!root.moveCurrent(entry)) root.refresh()
-            else root.fetchPage(target)
+            else {
+                root.loadedPageValues = ({})
+                root.fetchPage(1, true)
+            }
         })
     }
 
@@ -1083,7 +1191,7 @@ Item {
             return false
         }
         if (!validMessageIds(ids) || moveQueue.some(function(entry) { return ids.indexOf(entry.id) >= 0 })) {
-            actionError = "Messages must be unique IDs on the current page."
+            actionError = "Messages must be unique IDs in the loaded list."
             return false
         }
         var folder = folders.find(function(f) { return f.id === destination })
@@ -1100,8 +1208,9 @@ Item {
         if (!moveQueue.length) moveSequence = messages.map(function(message) { return message.id })
         var entries = ids.map(function(id) {
             return {
-                generation: root.generation, account: root.account, config: root.config, folder: root.folderId, page: root.page,
-                id: id, destination: destination, envelope: root.messages.find(function(m) { return m.id === id }),
+                generation: root.generation, account: root.account, config: root.config, folder: root.folderId,
+                page: root.messagePage(id), id: id, destination: destination,
+                envelope: root.messages.find(function(m) { return m.id === id }),
                 order: root.moveSequence.indexOf(id)
             }
         })
@@ -1680,9 +1789,10 @@ Item {
                     root.attachmentStatus = ""
                     root.cancelAttachmentOpen()
                 }
-                // Refill the current page; an emptied final page falls back.
-                var target = !root.messages.length && root.page > 1 ? root.page - 1 : root.page
-                Qt.callLater(function() { root.fetchPage(root.deleteCurrent() ? target : root.page) })
+                // Rebuild from the newest chunk so shifted backend pages are
+                // never combined with the pre-delete tail.
+                root.loadedPageValues = ({})
+                Qt.callLater(function() { root.fetchPage(1, true) })
             } catch (e) { root.actionError = e.message }
         }
     }
@@ -1709,6 +1819,7 @@ Item {
                 if (data.id !== root.markId || data.seen !== root.markSeen)
                     throw new Error("Invalid read-status response from mail helper.")
                 root.patchSnapshots(root.markContext, root.markId, root.markSeen)
+                root.patchLoadedMessage(root.markId, root.markSeen)
                 root.messages = root.messages.map(function(m) {
                     if (m.id !== root.markId) return m
                     var updated = Object.assign({}, m)

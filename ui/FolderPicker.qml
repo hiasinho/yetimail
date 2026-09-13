@@ -14,6 +14,7 @@ Rectangle {
     required property var folders
     required property var icons
     required property string folderId
+    property real maximumHeight: 322
     signal folderChosen(int index)
     signal retryRequested()
     function focusList() { folderList.forceActiveFocus() }
@@ -29,14 +30,15 @@ Rectangle {
         return icons.folder
     }
 
+    readonly property real naturalHeight: view.folders.length * 32 + 2
+        + (movePickerTitle.visible ? movePickerTitle.implicitHeight + 12 : 0)
+        + (folderStatus.visible ? folderStatus.implicitHeight + 12 : 0)
+        + (folderRetry.visible ? folderRetry.implicitHeight + 4 : 0)
     objectName: "folderMenu"
     z: 11
     // A sibling overlay stays interactive while mailbox controls are disabled.
     width: Math.min(180, parent.width - x)
-    height: Math.max(0, Math.min(322, parent.height - y,
-        view.folders.length * 32 + 2 + (movePickerTitle.visible ? movePickerTitle.implicitHeight + 12 : 0) +
-        (folderStatus.visible ? folderStatus.implicitHeight + 12 : 0) +
-        (folderRetry.visible ? folderRetry.implicitHeight + 4 : 0)))
+    height: Math.max(0, Math.min(maximumHeight, parent.height - y, naturalHeight))
     color: Color.background
     border.color: Color.accent
     MouseArea { anchors.fill: parent }

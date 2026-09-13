@@ -162,9 +162,14 @@ Item {
     property string selectedId: ""
     property int page: 1
     readonly property bool hasNext: page === 1
+    property bool loadingMore: false
+    property string loadMoreError: ""
+    property int cacheFreshMs: 120000
     readonly property int unread: messages.filter(function(m) { return m.unread }).length
     property var calls: []
     property var fixtures: []
+    property bool deferReads: false
+    property string pendingReadId: ""
 
     function record(operation, id, seen) {
         calls = calls.concat([{operation: operation, id: id || "", seen: seen, account: account}])
@@ -180,31 +185,41 @@ Item {
         message = null
         messages = fixtures.slice(0, 50)
     }
-    function refresh() { record("refresh"); messages = fixtures.slice((page - 1) * 50, page * 50) }
+    function refresh() { record("refresh"); messages = fixtures.slice(0, page * 50) }
     // Guards intentionally belong to Widget in these tests: do not hide UI bugs.
     function readMessage(id) {
+        if (reading) return
         record("read", id)
         selectedId = id
+        if (deferReads) {
+            pendingReadId = id
+            message = null
+            reading = true
+            return
+        }
+        publishRead(id)
+    }
+    function publishRead(id) {
         var body = ""
         for (var i = 0; i < 180; i++) body += "Long offline message line " + i + "\n"
         message = {id: id, subject: "Long fixture", from: "Sender", to: "Recipient", date: "today", body: body}
     }
-    function nextPage() {
-        record("next")
-        if (!hasNext) return
+    function finishRead() {
+        var id = pendingReadId
+        pendingReadId = ""
+        reading = false
+        if (id) publishRead(id)
+    }
+    function loadMore() {
+        record("loadMore")
+        if (!hasNext || loadingMore) return false
         page++
-        selectedId = ""
-        message = null
-        messages = fixtures.slice(50)
+        messages = fixtures.slice(0, 100)
+        return true
     }
-    function previousPage() {
-        record("previous")
-        if (page === 1) return
-        page--
-        selectedId = ""
-        message = null
-        messages = fixtures.slice(0, 50)
-    }
+    function retryLoadMore() { return loadMore() }
+    function nextPage() { return loadMore() }
+    function previousPage() {}
     function setRead(id, seen) { return setReadMany([id], seen) }
     function setReadMany(ids, seen) {
         if (!validIds(ids)) return false
@@ -213,7 +228,7 @@ Item {
             if (ids.indexOf(row.id) < 0) return row
             return {id: row.id, from: row.from, to: row.to, subject: row.subject, date: row.date, unread: !seen}
         })
-        messages = fixtures.slice((page - 1) * 50, page * 50)
+        messages = fixtures.slice(0, page * 50)
         return true
     }
     onAccountChanged: { folderId = ""; folderName = "Inbox"; restoreFolders(false); foldersError = ""; populate() }

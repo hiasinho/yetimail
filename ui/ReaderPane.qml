@@ -279,7 +279,7 @@ ColumnLayout {
                     (view.selectedAttachment ? "[" + (view.attachmentIndex + 1) + "]\n" + view.attachmentMetadata(view.selectedAttachment) +
                      "\n\n" + (view.selectedAttachment.openable ? "Open with the default application only if you trust this file." : "Save-only type: opening is blocked.") : "No attachments in this message.")) :
                 (view.showHeaders ? "Subject: " + view.message.subject + "\nFrom: " + view.message.from + "\nTo: " + view.message.to + "\nDate: " + view.message.date + "\n\n" : "") + view.message.body :
-                "Select a message with j/k, then press Enter to read.\n\nOpening a message does not mark it as read. Use m / u to change its status."
+                "Select a message with j/k to preview it here.\n\nPreviewing a message does not mark it as read. Use m / u to change its status."
             onTextChanged: { cursorPosition = 0; reader.contentItem.contentY = 0 }
         }
         Connections {

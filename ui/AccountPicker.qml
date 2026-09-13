@@ -11,14 +11,16 @@ Rectangle {
     required property var accounts
     required property var labels
     required property string currentAccount
+    property real maximumHeight: 322
     signal accountChosen(int index)
     function focusList() { accountList.forceActiveFocus() }
     function reveal(index) { accountList.positionViewAtIndex(index, ListView.Contain) }
 
+    readonly property real naturalHeight: view.accounts.length * 32 + 2
     objectName: "accountMenu"
     z: 11
     width: Math.min(180, parent.width - x)
-    height: Math.max(0, Math.min(322, parent.height - y, view.accounts.length * 32 + 2))
+    height: Math.max(0, Math.min(maximumHeight, parent.height - y, naturalHeight))
     color: Color.background
     border.color: Color.accent
     MouseArea { anchors.fill: parent }

@@ -53,7 +53,7 @@ ShellRoot {
                 widget.settings = ({demo: true, accounts: "alpha,beta", account: "forbidden"})
                 widget.selectedAccount = "alpha"
                 widget.cancelDelete(); mail.deleting = false
-                mail.loading = false; mail.reading = false; mail.marking = false; mail.moving = false; mail.savingAttachment = false; mail.openingAttachment = false
+                mail.loading = false; mail.reading = false; mail.deferReads = false; mail.pendingReadId = ""; mail.marking = false; mail.moving = false; mail.savingAttachment = false; mail.openingAttachment = false
                 mail.folderId = ""; mail.folderName = "Inbox"; mail.foldersLoading = false; mail.foldersLoaded = false; mail.foldersError = ""; mail.folderCache = ({})
                 widget.showFolders = false
                 widget.showSettings = false
@@ -109,14 +109,14 @@ ShellRoot {
                 var refresh = find(widget, function(item) { return item.objectName === "inboxRefreshButton" })
                 check(title !== null && footer !== null && panel !== null && inbox !== null && refresh !== null, "inbox chrome found")
                 equal(title.text, "INBOX / DEMO", "heading names current folder")
-                equal(footer.text, "50 messages · Page 1", "footer combines count and page")
+                equal(footer.text, "50 unread · 50 msgs · p1", "footer combines unread, count, and page compactly")
                 check(!newer.enabled, "Newer is disabled on page one")
                 equal(help.text, "?", "shortcut help stays compact")
                 var fullPageHeight = panel.contentHeight
                 mail.messages = mail.messages.slice(0, 3)
                 wait(30)
-                equal(footer.text, "3 messages · Page 1", "short-page count updates")
-                check(panel.contentHeight < fullPageHeight, "short mailbox page reduces panel height")
+                equal(footer.text, "3 unread · 3 msgs · p1", "short-page counts update")
+                equal(panel.contentHeight, fullPageHeight, "short mailbox page keeps a fixed panel height")
                 mail.folderName = "Projects / 2026"
                 wait(30)
                 equal(title.text, "PROJECTS / 2026 / DEMO", "heading follows folder navigation")
@@ -132,11 +132,12 @@ ShellRoot {
                 press(Qt.Key_J); press(Qt.Key_Delete)
                 check(widget.confirmingDelete, "Delete in Trash asks")
                 var panel = find(widget, function(item) { return item.objectName === "mailPanel" })
-                equal(panel.contentHeight, 640, "confirmation expands a compact inbox")
+                equal(panel.contentHeight, 640, "confirmation preserves the fixed inbox height")
                 equal(widget.deleteSnapshot.id, "alpha/2")
                 equal(widget.deleteSnapshot.account, "alpha")
                 equal(widget.deleteSnapshot.folder, "Trash")
                 equal(widget.deleteSnapshot.subject, "Fixture 2")
+                var previewCalls = mail.calls.length
                 for (var key of [Qt.Key_J, Qt.Key_K, Qt.Key_L, Qt.Key_Right, Qt.Key_Left,
                         Qt.Key_F, Qt.Key_O, Qt.Key_V, Qt.Key_A, Qt.Key_S, Qt.Key_M, Qt.Key_U,
                         Qt.Key_N, Qt.Key_P, Qt.Key_R, Qt.Key_Tab, Qt.Key_BracketRight,
@@ -144,25 +145,26 @@ ShellRoot {
                 press(Qt.Key_X, Qt.ShiftModifier)
                 press(Qt.Key_M, Qt.ShiftModifier); press(Qt.Key_D, Qt.ControlModifier)
                 press(Qt.Key_G); press(Qt.Key_T)
-                equal(mail.calls.length, 0, "all other modal shortcuts blocked")
+                equal(mail.calls.length, previewCalls, "all other modal shortcuts blocked")
                 equal(widget.cursorId, "alpha/2")
                 check(widget.confirmingDelete && widget.opened)
                 press(Qt.Key_H)
                 check(!widget.confirmingDelete && widget.opened)
                 press(Qt.Key_Delete); press(Qt.Key_Escape)
-                equal(mail.calls.length, 0, "cancellation is inert")
+                equal(mail.calls.length, previewCalls, "cancellation is inert")
                 press(Qt.Key_Delete)
                 var cancel = find(widget, function(item) { return item.objectName === "cancelDelete" })
                 mouseClick(cancel, cancel.width / 2, cancel.height / 2); wait(30)
                 check(!widget.confirmingDelete)
-                equal(mail.calls.length, 0, "Cancel button is inert")
+                equal(mail.calls.length, previewCalls, "Cancel button is inert")
                 press(Qt.Key_Delete); press(Qt.Key_Return)
-                equal(mail.calls.length, 1)
-                equal(mail.calls[0].operation, "delete")
-                equal(mail.calls[0].id, "alpha/2")
+                var deletes = mail.calls.filter(function(call) { return call.operation === "delete" })
+                equal(deletes.length, 1)
+                equal(deletes[0].id, "alpha/2")
                 equal(widget.cursorId, "alpha/3", "next row preserved")
                 widget.confirmDelete()
-                equal(mail.calls.length, 1, "duplicate confirmation is inert")
+                equal(mail.calls.filter(function(call) { return call.operation === "delete" }).length, 1,
+                    "duplicate confirmation is inert")
                 press(Qt.Key_Return)
                 widget.cursorId = "alpha/4"
                 var button = find(widget, function(item) { return item.objectName === "readerDelete" })
@@ -243,9 +245,9 @@ ShellRoot {
             }
             function test_archive_and_trash() {
                 press(Qt.Key_J); press(Qt.Key_X)
-                equal(mail.calls[0].operation, "move")
-                equal(mail.calls[0].id, "alpha/2")
-                equal(mail.calls[0].seen, "Archive")
+                var firstMove = mail.calls.filter(function(call) { return call.operation === "move" })[0]
+                equal(firstMove.id, "alpha/2")
+                equal(firstMove.seen, "Archive")
                 equal(widget.cursorId, "alpha/3")
                 check(!widget.confirmingDelete)
                 press(Qt.Key_Return)
@@ -396,20 +398,23 @@ ShellRoot {
                 press(Qt.Key_M, Qt.ShiftModifier)
                 check(widget.showFolders && widget.movePicker, "Shift+M opens move picker")
                 compare(widget.moveTargetIds, ["alpha/2"])
-                equal(mail.calls.length, 1, "opening picker only discovers folders")
+                equal(mail.calls.filter(function(call) { return call.operation === "folders" }).length, 1,
+                    "opening picker only discovers folders")
+                var pickerCallCount = mail.calls.length
                 press(Qt.Key_Return)
-                equal(mail.calls.length, 1, "current folder cannot be a destination")
+                equal(mail.calls.length, pickerCallCount, "current folder cannot be a destination")
                 press(Qt.Key_M); press(Qt.Key_U)
-                equal(mail.calls.length, 1, "mark actions blocked in picker")
+                equal(mail.calls.length, pickerCallCount, "mark actions blocked in picker")
                 press(Qt.Key_J); press(Qt.Key_J); press(Qt.Key_Return)
                 check(!widget.showFolders)
-                equal(mail.calls[1].operation, "move")
-                equal(mail.calls[1].id, "alpha/2")
-                equal(mail.calls[1].seen, "Archive", "chosen destination")
+                var chosenMove = mail.calls.filter(function(call) { return call.operation === "move" })[0]
+                equal(chosenMove.id, "alpha/2")
+                equal(chosenMove.seen, "Archive", "chosen destination")
                 equal(mail.folderId, "INBOX", "move does not navigate")
                 equal(widget.cursorId, "alpha/3", "next row selected")
                 press(Qt.Key_M)
-                equal(mail.calls[2].operation, "mark", "lowercase m still marks read")
+                equal(mail.calls.filter(function(call) { return call.operation === "mark" }).length, 1,
+                    "lowercase m still marks read")
                 press(Qt.Key_M, Qt.ShiftModifier); press(Qt.Key_H)
                 check(!widget.showFolders)
                 press(Qt.Key_M, Qt.ShiftModifier); press(Qt.Key_Escape)
@@ -540,8 +545,12 @@ ShellRoot {
                 equal(accountButton.x, 0, "account dropdown comes first")
                 equal(accountButton.y, folderButton.y, "account and mailbox buttons align")
                 equal(accountButton.height, folderButton.height, "account and mailbox buttons share a height")
-                check(folderButton.x > accountButton.x && folderButton.width < 50 && folderButton.tooltipText.indexOf("Inbox") !== -1,
+                equal(accountButton.bordered, false, "footer utility buttons have no outline")
+                check(folderButton.x > accountButton.x && folderButton.width <= 30 && folderButton.tooltipText.indexOf("Inbox") !== -1,
                     "compact mailbox icon follows account icon")
+                var inboxPane = find(widget, function(item) { return item.objectName === "inboxPane" })
+                var accountPosition = accountButton.mapToItem(inboxPane, 0, 0)
+                check(accountPosition.y > inboxPane.height / 2, "account and mailbox controls live in the footer")
                 mouseClick(accountButton, accountButton.width / 2, accountButton.height / 2); wait(30)
                 check(widget.showAccounts, "account icon opens dropdown")
                 var dismissArea = find(widget, function(item) { return item.objectName === "pickerDismissArea" })
@@ -557,7 +566,7 @@ ShellRoot {
                 equal(accountPicker.count, 2, "account dropdown lists allowed accounts")
                 var accountAnchor = accountMenu.mapToItem(accountButton, 0, 0)
                 equal(accountAnchor.x, 0, "account menu left aligns with icon")
-                equal(accountAnchor.y, accountButton.height + 2, "account menu sits beneath icon")
+                equal(accountAnchor.y, -accountMenu.height - 2, "account menu opens above footer icon")
                 press(Qt.Key_J); press(Qt.Key_Return)
                 equal(widget.currentAccount, "beta", "account dropdown chooses highlighted account")
                 check(!widget.showAccounts)
@@ -571,7 +580,7 @@ ShellRoot {
                 equal(menu.height, mail.folders.length * 32 + 2, "short menu hugs discovered rows")
                 var anchor = menu.mapToItem(folderButton, 0, 0)
                 equal(anchor.x, 0, "menu left aligns with icon")
-                equal(anchor.y, folderButton.height + 2, "menu sits beneath icon")
+                equal(anchor.y, -menu.height - 2, "menu opens above footer icon")
                 equal(picker.count, mail.folders.length, "only discovered folders are listed")
                 check(find(picker, function(item) { return item.text === "Sent mail" }) !== null, "folder name shown without role suffix")
                 equal(mail.calls.filter(function(call) { return call.operation === "folders" }).length, 1,
@@ -713,6 +722,9 @@ ShellRoot {
                 equal(mail.messages.length, 50)
                 equal(widget.cursorId, "alpha/1")
                 press(Qt.Key_J); equal(widget.cursorId, "alpha/2")
+                equal(mail.selectedId, "alpha/2"); equal(mail.message.id, "alpha/2")
+                equal(widget.pane, "list", "preview keeps keyboard focus in the list")
+                check(mail.messages[1].unread, "preview does not mark the message seen")
                 press(Qt.Key_K); equal(widget.cursorId, "alpha/1")
                 press(Qt.Key_K); equal(widget.cursorId, "alpha/1")
                 press(Qt.Key_G, Qt.ShiftModifier); equal(widget.cursorId, "alpha/50")
@@ -720,7 +732,45 @@ ShellRoot {
                 press(Qt.Key_G); press(Qt.Key_G); equal(widget.cursorId, "alpha/1")
                 press(Qt.Key_D, Qt.ControlModifier); check(widget.cursorIndex > 0)
                 press(Qt.Key_U, Qt.ControlModifier); equal(widget.cursorId, "alpha/1")
-                equal(mail.calls.length, 0, "navigation never reads or marks")
+                check(mail.calls.some(function(call) { return call.operation === "read" }), "navigation previews messages")
+                check(!mail.calls.some(function(call) { return call.operation === "mark" }), "navigation never changes read status")
+                equal(mail.selectedId, widget.cursorId, "the preview follows the list cursor")
+            }
+            function test_rapid_navigation_previews_latest_message() {
+                mail.deferReads = true
+                press(Qt.Key_J)
+                equal(mail.pendingReadId, "alpha/2")
+                press(Qt.Key_Space); equal(widget.selectedCount, 1, "selection remains responsive during preview reads")
+                press(Qt.Key_J); press(Qt.Key_J)
+                equal(widget.cursorId, "alpha/4")
+                equal(mail.calls.filter(function(call) { return call.operation === "read" }).length, 1,
+                    "an in-flight preview is not replaced unsafely")
+                widget.showHelp = true
+                mail.finishRead(); wait(30)
+                equal(mail.pendingReadId, "", "an overlay pauses the queued preview")
+                widget.showHelp = false; wait(30)
+                equal(mail.pendingReadId, "alpha/4", "latest cursor resumes after the overlay closes")
+                equal(mail.calls.filter(function(call) { return call.operation === "read" }).length, 2)
+                mail.finishRead(); wait(30)
+                equal(mail.message.id, "alpha/4")
+                equal(mail.selectedId, "alpha/4")
+                equal(widget.pane, "list")
+                check(mail.messages[3].unread)
+                check(!mail.calls.some(function(call) { return call.operation === "mark" }))
+                mail.deferReads = false
+                mail.marking = true; press(Qt.Key_J)
+                equal(mail.selectedId, "alpha/4", "a mutation pauses previews")
+                mail.marking = false; wait(30)
+                equal(mail.selectedId, "alpha/5", "preview resumes after a mutation")
+                mail.deferReads = true
+                press(Qt.Key_J); press(Qt.Key_J); press(Qt.Key_Tab)
+                equal(widget.pane, "reader")
+                mail.finishRead(); wait(30)
+                equal(mail.pendingReadId, "", "reader focus pauses a queued list preview")
+                press(Qt.Key_H); wait(30)
+                equal(mail.pendingReadId, "alpha/7", "returning to the list resumes its latest preview")
+                mail.finishRead(); wait(30)
+                equal(mail.selectedId, "alpha/7")
             }
             function test_reader_focus() {
                 press(Qt.Key_J)
@@ -772,21 +822,24 @@ ShellRoot {
             function test_mark_targets() {
                 press(Qt.Key_Return); check(area.activeFocus)
                 press(Qt.Key_M)
-                equal(mail.calls[1].operation, "mark"); equal(mail.calls[1].id, "alpha/1")
-                equal(mail.calls[1].seen, true); check(!mail.messages[0].unread)
-                press(Qt.Key_U); equal(mail.calls[2].seen, false); check(mail.messages[0].unread)
+                var marks = mail.calls.filter(function(call) { return call.operation === "mark" })
+                equal(marks[0].id, "alpha/1"); equal(marks[0].seen, true); check(!mail.messages[0].unread)
+                press(Qt.Key_U); check(mail.messages[0].unread)
                 press(Qt.Key_H); press(Qt.Key_J); press(Qt.Key_M)
-                equal(mail.calls[3].id, "alpha/2", "list mark targets cursor, not open reader")
-                press(Qt.Key_Tab); check(area.activeFocus); press(Qt.Key_M)
-                equal(mail.calls[4].id, "alpha/1", "reader mark targets open message, not cursor")
-                press(Qt.Key_U); equal(mail.calls[5].id, "alpha/1"); equal(mail.calls[5].seen, false)
+                marks = mail.calls.filter(function(call) { return call.operation === "mark" })
+                equal(marks[2].id, "alpha/2", "list mark targets the cursor preview")
+                press(Qt.Key_Tab); check(area.activeFocus); press(Qt.Key_U)
+                marks = mail.calls.filter(function(call) { return call.operation === "mark" })
+                equal(marks[3].id, "alpha/2", "reader mark targets the previewed message")
+                equal(marks[3].seen, false)
                 press(Qt.Key_H); press(Qt.Key_J)
                 check(!area.activeFocus, "h transfers actual focus out of the TextArea")
                 mouseClick(area, 20, 100); wait(30)
                 check(area.activeFocus, "click restores reader focus")
                 equal(widget.pane, "reader")
                 press(Qt.Key_M)
-                equal(mail.calls[6].id, "alpha/1", "clicking the reader restores the visible message as mark target")
+                marks = mail.calls.filter(function(call) { return call.operation === "mark" })
+                equal(marks[4].id, "alpha/3", "clicking the reader keeps the previewed message as mark target")
             }
             function test_full_selectable_headers() {
                 press(Qt.Key_Return)
@@ -893,14 +946,14 @@ ShellRoot {
                 press(Qt.Key_Return)
                 press(Qt.Key_H); press(Qt.Key_J)
                 equal(widget.cursorId, "alpha/2")
-                equal(mail.selectedId, "alpha/1")
+                equal(mail.selectedId, "alpha/2", "list navigation updates the displayed preview")
                 mouseClick(readButton, readButton.width / 2, readButton.height / 2); wait(30)
-                equal(mail.calls[1].id, "alpha/1", "reader toolbar ignores list cursor")
-                equal(mail.calls[1].seen, true)
-                check(mail.messages[1].unread, "other message remains untouched")
+                equal(mail.calls[2].id, "alpha/2", "reader toolbar targets the displayed preview")
+                equal(mail.calls[2].seen, true)
+                check(mail.messages[0].unread, "other message remains untouched")
                 mouseClick(unreadButton, unreadButton.width / 2, unreadButton.height / 2); wait(30)
-                equal(mail.calls[2].id, "alpha/1")
-                equal(mail.calls[2].seen, false)
+                equal(mail.calls[3].id, "alpha/2")
+                equal(mail.calls[3].seen, false)
             }
             function test_ask_agent_prompt() {
                 var button = find(widget, function(item) { return item.objectName === "readerAskAgent" })
@@ -991,7 +1044,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 27)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 28)
                     console.log("YETIMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

@@ -20,7 +20,7 @@ for source in "$omarchy_shell"/Ui/*; do
     [[ ${source##*/} == KeyboardPanel.qml ]] || ln -s "$source" "$work/Ui/${source##*/}"
 done
 cp "$root/tests/keyboard/KeyboardPanel.qml" "$work/Ui/KeyboardPanel.qml"
-cp "$root/Widget.qml" "$root/AccountConfigCoordinator.qml" "$work/Yetimail/"
+cp "$root/Widget.qml" "$root/AccountConfigCoordinator.qml" "$root/AgentLaunchService.qml" "$work/Yetimail/"
 cp -R "$root/ui" "$work/Yetimail/ui"
 cp "$root/tests/keyboard/MailService.qml" "$work/Yetimail/MailService.qml"
 cp "$root/tests/keyboard/shell.qml" "$work/shell.qml"

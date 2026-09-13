@@ -18,8 +18,9 @@ ShellRoot {
             property var mail
             property var area
             property var scroll
+            property var agentLauncher
             property var defaultOpenUrl
-            property var defaultLaunchAgentPrompt
+            property var defaultExternalAgentLauncher
             function find(item, predicate) {
                 if (predicate(item)) return item
                 var children = item.children || []
@@ -53,7 +54,7 @@ ShellRoot {
             function resetHarness() {
                 widget.opened = false
                 widget.openUrl = defaultOpenUrl
-                widget.launchAgentPrompt = defaultLaunchAgentPrompt
+                agentLauncher.externalLauncher = defaultExternalAgentLauncher
                 widget.settings = ({demo: true, accounts: "alpha,beta", account: "forbidden"})
                 widget.selectedAccount = "alpha"
                 widget.cancelDelete(false)
@@ -75,9 +76,9 @@ ShellRoot {
                 widget.readerStateReady = false
                 widget.linkIndex = 0
                 widget.attachmentIndex = 0
-                widget.agentLaunching = false
-                widget.agentProcessStarted = false
-                widget.agentStatus = ""
+                agentLauncher.launching = false
+                agentLauncher.pendingSerial = 0
+                agentLauncher.status = ""
                 widget.clearSelection()
                 widget.cursorId = ""
                 widget.pane = "list"
@@ -102,8 +103,10 @@ ShellRoot {
                 check(area !== null, "actual message TextArea found")
                 scroll = find(widget, function(item) { return item.objectName === "messageReader" })
                 check(scroll !== null, "actual reader ScrollView found")
+                agentLauncher = widget.agentLaunchService
+                check(agentLauncher !== null, "agent launch service found")
                 defaultOpenUrl = widget.openUrl
-                defaultLaunchAgentPrompt = widget.launchAgentPrompt
+                defaultExternalAgentLauncher = agentLauncher.externalLauncher
                 equal(widget.currentAccount, "alpha", "invalid configured preference falls back to allowlist")
                 equal(mail.fixtures.length, 63)
             }
@@ -1108,27 +1111,48 @@ ShellRoot {
                 check(!button.enabled, "demo mail cannot be sent to an agent")
                 equal(widget.askAgent(), false, "demo guard blocks direct launch")
 
-                var prompts = []
-                var originalLauncher = widget.launchAgentPrompt
-                widget.launchAgentPrompt = function(prompt) { prompts.push(prompt) }
+                var launches = []
+                agentLauncher.externalLauncher = function(prompt, completion) {
+                    launches.push({prompt: prompt, completion: completion})
+                    return true
+                }
                 mail.demo = false
                 wait(30)
                 check(button.enabled, "loaded real message enables Ask agent")
                 button.clicked(); wait(30)
-                equal(prompts.length, 1, "one explicit click launches once")
-                check(prompts[0].indexOf("himalaya") >= 0 && prompts[0].indexOf("alpha/1") >= 0,
+                equal(launches.length, 1, "one explicit click launches once")
+                check(widget.agentLaunching, "launch remains busy until its completion")
+                equal(widget.askAgent(), false, "double launch is rejected")
+                equal(launches.length, 1, "double launch never reaches the launcher")
+                check(launches[0].prompt.indexOf("himalaya") >= 0 && launches[0].prompt.indexOf("alpha/1") >= 0,
                     "prompt points the agent at the displayed Himalaya message")
-                check(prompts[0].indexOf("--account=alpha") >= 0, "prompt preserves account context")
-                check(prompts[0].indexOf("Long fixture") < 0 && prompts[0].indexOf("Long offline message line 0") < 0,
+                check(launches[0].prompt.indexOf("--account=alpha") >= 0, "prompt preserves account context")
+                check(launches[0].prompt.indexOf("Long fixture") < 0 && launches[0].prompt.indexOf("Long offline message line 0") < 0,
                     "prompt does not export the displayed email content")
-                check(prompts[0].indexOf("untrusted data") >= 0 && prompts[0].indexOf("confirmation") >= 0,
+                check(launches[0].prompt.indexOf("untrusted data") >= 0 && launches[0].prompt.indexOf("confirmation") >= 0,
                     "prompt keeps safety boundaries around retrieved mail")
-                var command = widget.agentCommand()
+                var quoted = agentLauncher.buildPrompt({config: "/tmp/a'b", account: "work team", mailbox: "Box ' one", messageId: "id; two"})
+                check(quoted.indexOf(agentLauncher.shellQuote("--config=/tmp/a'b")) >= 0
+                    && quoted.indexOf(agentLauncher.shellQuote("--mailbox=Box ' one")) >= 0
+                    && quoted.indexOf(agentLauncher.shellQuote("id; two")) >= 0,
+                    "mailbox references are shell quoted")
+                var command = agentLauncher.launcherCommand()
                 equal(command.length, 2, "agent launch uses a fixed argument array")
                 equal(command[0], "python3")
                 check(command[1].indexOf("yetimail-agent-launcher") >= 0, "private launcher receives the prompt over stdin")
                 check(command.join(" ").indexOf("Long fixture") < 0, "email content is absent from desktop launch arguments")
-                widget.launchAgentPrompt = originalLauncher
+
+                mail.readRequest += 1
+                wait(10)
+                launches[0].completion("")
+                launches[0].completion("late duplicate")
+                wait(10)
+                check(!widget.agentLaunching, "completion releases launch state exactly once")
+                equal(widget.agentStatus, "", "stale completion cannot update the new message context")
+
+                agentLauncher.externalLauncher = function(prompt, completion) { return false }
+                equal(widget.askAgent(), false, "missing launcher fails closed")
+                equal(widget.agentStatus, "Could not start Ask agent.")
                 mail.demo = true
             }
             function test_busy_guards() {

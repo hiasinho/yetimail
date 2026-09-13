@@ -112,7 +112,7 @@ BarWidget {
     readonly property int selectedCount: selectedIds.length
     property bool showHelp: false
     property bool showSettings: false
-    property string accountConfigTransaction: ""
+    property alias accountConfigTransaction: configCoordinator.transaction
     property bool showAccounts: false
     property int accountIndex: 0
     property bool showFolders: false
@@ -312,44 +312,31 @@ BarWidget {
             bar.shell.updateEntryInline(moduleName, updated)
         settings = updated
     }
-    function accountConfigSafeAcrossInstances() {
+    function accountConfigParticipants() {
         var items = bar && typeof bar.moduleWidgets === "function" ? bar.moduleWidgets(moduleName) : [root]
-        return items.every(function(item) {
-            var service = item ? item.mailService : null
-            return service && !service.deleting && !service.movePending && !service.marking
-                && !service.savingAttachment && !service.openingAttachment && !service.accountConfigSaving
-        })
+        var participants = items.map(function(item) { return item ? item.accountConfigParticipant : null })
+            .filter(function(participant) { return participant !== null })
+        return participants.length ? participants : [accountConfigParticipant]
     }
-    function broadcastAccountConfig(method, transaction) {
+    function routeAccountConfigEvent(method, transaction) {
         var items = bar && typeof bar.moduleWidgets === "function" ? bar.moduleWidgets(moduleName) : [root]
-        items.forEach(function(item) {
-            if (item && typeof item[method] === "function") item[method](transaction)
+        var coordinators = items.map(function(item) { return item ? item.accountConfigCoordinator : null })
+            .filter(function(coordinator) { return coordinator !== null })
+        var handled = false
+        coordinators.forEach(function(coordinator) {
+            if (typeof coordinator[method] === "function" && coordinator[method](transaction) === true) handled = true
         })
+        if (method === "fenceExpired" && !handled && coordinators.length)
+            coordinators[0].recoverOrphanedFence(transaction, accountConfigParticipants())
     }
-    function prepareAccountConfigurationSave(transaction) { mail.prepareAccountConfigSave(transaction) }
-    function accountConfigurationChanged(transaction) { mail.commitAccountConfigSave(transaction, showSettings) }
-    function accountConfigurationSaveFailed(transaction) { mail.cancelAccountConfigSave(transaction) }
-    function accountConfigurationFenceExpired(transaction) {
-        var items = bar && typeof bar.moduleWidgets === "function" ? bar.moduleWidgets(moduleName) : [root]
-        var writerAlive = items.some(function(item) {
-            var service = item ? item.mailService : null
-            return service && service.accountConfigSaving && service.accountConfigFenceToken === transaction
-        })
-        broadcastAccountConfig(writerAlive ? "renewAccountConfigurationFence" : "accountConfigurationSaveFailed", transaction)
-    }
-    function renewAccountConfigurationFence(transaction) { mail.renewAccountConfigFence(transaction) }
     function saveAccountConfiguration(accountId, revision, email, displayName, makeDefault, inbox, sent, drafts, trash, archive) {
-        if (!accountConfigSafeAcrossInstances()) {
-            mail.accountOverviewError = "Wait for mail actions on every display to finish before saving account settings."
-            return
+        var request = {
+            accountId: accountId, revision: revision, email: email, displayName: displayName,
+            makeDefault: makeDefault, inbox: inbox, sent: sent, drafts: drafts,
+            trash: trash, archive: archive
         }
-        var transaction = Date.now() + "-" + Math.random()
-        accountConfigTransaction = transaction
-        broadcastAccountConfig("prepareAccountConfigurationSave", transaction)
-        if (!mail.saveAccountConfig(transaction, accountId, revision, email, displayName, makeDefault, inbox, sent, drafts, trash, archive)) {
-            broadcastAccountConfig("accountConfigurationSaveFailed", transaction)
-            accountConfigTransaction = ""
-        }
+        if (!accountConfigCoordinator.start(accountConfigParticipants(), accountConfigParticipant, request))
+            mail.accountOverviewError = accountConfigCoordinator.lastError
     }
     function openSettings() {
         if (switchingBlocked || confirmingDelete) return
@@ -757,6 +744,31 @@ BarWidget {
     }
 
     readonly property alias mailService: mail
+    readonly property alias accountConfigParticipant: configParticipant
+    readonly property alias accountConfigCoordinator: configCoordinator
+
+    QtObject {
+        id: configParticipant
+        function canPrepareAccountConfig() {
+            return !mail.deleting && !mail.movePending && !mail.marking
+                && !mail.savingAttachment && !mail.openingAttachment
+                && !mail.accountOverviewLoading && !mail.accountLabelSaving && !mail.accountConfigSaving
+        }
+        function prepareAccountConfig(transaction) { return mail.prepareAccountConfigSave(transaction) === true }
+        function commitAccountConfig(transaction) { mail.commitAccountConfigSave(transaction, root.showSettings) }
+        function cancelAccountConfig(transaction) { mail.cancelAccountConfigSave(transaction) }
+        function renewAccountConfig(transaction) { mail.renewAccountConfigFence(transaction) }
+        function isAccountConfigWriter(transaction) {
+            return mail.accountConfigSaving && mail.accountConfigFenceToken === transaction
+        }
+        function startAccountConfigSave(transaction, request) {
+            return mail.saveAccountConfig(transaction, request.accountId, request.revision, request.email,
+                request.displayName, request.makeDefault, request.inbox, request.sent, request.drafts,
+                request.trash, request.archive)
+        }
+    }
+    AccountConfigCoordinator { id: configCoordinator }
+
     MailService {
         id: mail
         active: root.bar !== null || demo
@@ -774,15 +786,9 @@ BarWidget {
             }
         }
         function onConfigChanged() { root.viewStateByMailbox = ({}); root.readerStateByMessage = ({}); if (mail.active) { mail.loadAccountOverview(); accountWarmTimer.restart() } }
-        function onAccountConfigSaved(transaction) {
-            root.broadcastAccountConfig("accountConfigurationChanged", transaction)
-            if (root.accountConfigTransaction === transaction) root.accountConfigTransaction = ""
-        }
-        function onAccountConfigSaveFailed(transaction) {
-            root.broadcastAccountConfig("accountConfigurationSaveFailed", transaction)
-            if (root.accountConfigTransaction === transaction) root.accountConfigTransaction = ""
-        }
-        function onAccountConfigFenceExpired(transaction) { root.accountConfigurationFenceExpired(transaction) }
+        function onAccountConfigSaved(transaction) { root.routeAccountConfigEvent("saved", transaction) }
+        function onAccountConfigSaveFailed(transaction) { root.routeAccountConfigEvent("failed", transaction) }
+        function onAccountConfigFenceExpired(transaction) { root.routeAccountConfigEvent("fenceExpired", transaction) }
         function onGenerationChanged() {
             root.cancelDelete(false)
             root.pendingPreviewId = ""

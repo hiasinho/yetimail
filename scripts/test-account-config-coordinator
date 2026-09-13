@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Offline multi-instance account-configuration transaction coordination regressions.
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+source "$root/tests/integration/harness.sh"
+integration_init account_config_coordinator
+
+ln -s "$root" "$work/Yetimail"
+cp "$root/tests/integration/account-config-coordinator/shell.qml" "$work/shell.qml"
+
+status=0
+if ! integration_run_qml coordinator 8; then status=1; fi
+if ! integration_assert_output coordinator 'ACCOUNT_CONFIG_COORDINATOR_OK' \
+    'ACCOUNT_CONFIG_COORDINATOR_FAIL|TypeError|ReferenceError|Unable to assign|Failed to load configuration'; then status=1; fi
+if ! integration_assert_no_himalaya; then status=1; fi
+if [[ $status == 0 ]]; then echo 'YETIMAIL_ACCOUNT_CONFIG_COORDINATOR_OK'; fi
+exit "$status"

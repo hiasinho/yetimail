@@ -38,7 +38,7 @@ Item {
     property bool accountConfigBlocked: false
     property bool accountConfigRefreshPending: false
     property string accountConfigFenceToken: ""
-    function prepareAccountConfigSave(transaction) { accountConfigFenceToken = transaction; accountConfigBlocked = true; accountConfigRefreshPending = true }
+    function prepareAccountConfigSave(transaction) { accountConfigFenceToken = transaction; accountConfigBlocked = true; accountConfigRefreshPending = true; return true }
     function renewAccountConfigFence(transaction) {}
     function commitAccountConfigSave(transaction, deferFetch) { if (transaction !== accountConfigFenceToken) return; accountConfigFenceToken = ""; accountConfigBlocked = false; accountConfigRefreshPending = deferFetch }
     function cancelAccountConfigSave(transaction) { if (transaction !== accountConfigFenceToken) return; accountConfigFenceToken = ""; accountConfigBlocked = false; accountConfigRefreshPending = false }

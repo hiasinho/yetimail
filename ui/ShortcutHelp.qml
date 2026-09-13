@@ -51,6 +51,7 @@ Rectangle {
                     ["f", "Choose folder · r retry"],
                     ["gi / gs", "Inbox / sent"],
                     ["ga / gt", "Archive / trash"],
+                    ["g1 … g9", "Go to mailbox by picker number"],
                     ["o", "Show / hide links"],
                     ["v", "Full selectable headers"],
                     ["a", "Attachments: j/k select"],

@@ -610,6 +610,12 @@ ShellRoot {
                 for (var i = 0; i < roles.length; i++) {
                     press(Qt.Key_G); press(roles[i]); equal(mail.folderId, ids[i])
                 }
+                press(Qt.Key_G); press(Qt.Key_2)
+                equal(mail.folderId, "Sent", "g2 goes to the second mailbox")
+                press(Qt.Key_G); press(Qt.Key_5)
+                equal(mail.folderId, "Projects/2026", "g5 goes to the fifth mailbox")
+                var numberCalls = mail.calls.filter(function(call) { return call.operation === "number" })
+                compare(numberCalls.map(function(call) { return call.id }), [2, 5], "numeric mailbox shortcuts are one-based")
                 press(Qt.Key_F); press(Qt.Key_H); check(!widget.showFolders)
                 press(Qt.Key_F); press(Qt.Key_Escape); check(!widget.showFolders); check(widget.opened)
                 press(Qt.Key_Question); check(widget.showHelp)

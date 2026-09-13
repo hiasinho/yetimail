@@ -66,12 +66,14 @@ ShellRoot {
             if (test.phase === 0 && mail.messages.length && !mail.loading) {
                 if (!test.check(mail.folderId === "" && mail.folderName === "Inbox" && !mail.foldersLoaded, "defaults/lazy discovery")) return
                 mail.readMessage("same")
-                mail.selectFolderRole("sent")
-                if (!test.check(mail.foldersLoading, "discovery latch")) return
+                mail.selectFolderNumber(2)
+                if (!test.check(mail.foldersLoading && mail.pendingFolderNumber === 2, "numeric discovery latch")) return
                 test.phase++
             } else if (test.phase === 1 && mail.folderId === "opaque" && !mail.loading && !mail.reading && mail.messages.length) {
                 if (!test.check(mail.folderName === "Sent Items" && mail.message === null && mail.selectedId === "" && mail.page === 1, "folder reset")) return
+                if (!test.check(mail.pendingFolderNumber === 0, "numeric shortcut consumed")) return
                 if (!test.check(mail.folders[0].id === "in", "Inbox sorted first")) return
+                if (!test.check(!mail.selectFolderNumber(9) && mail.foldersError.indexOf("9") >= 0, "unavailable numeric mailbox")) return
                 var discovered = mail.folders
                 mail.folders = [{id: "[Gmail]/Trash", name: "[Gmail]/Trash"},
                                 {id: "[Gmail]/All Mail", name: "[Gmail]/All Mail"}]

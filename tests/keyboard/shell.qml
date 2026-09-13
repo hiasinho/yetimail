@@ -107,6 +107,7 @@ ShellRoot {
                 var inbox = find(widget, function(item) { return item.objectName === "inboxPane" })
                 var refresh = find(widget, function(item) { return item.objectName === "inboxRefreshButton" })
                 check(title !== null && footer !== null && panel !== null && inbox !== null && refresh !== null, "inbox chrome found")
+                equal(inbox.width, 310, "message list keeps a fixed width")
                 equal(title.text, "INBOX / DEMO", "heading names current folder")
                 equal(footer.text, "50 unread · 50 loaded", "footer reports the loaded working set")
                 equal(help.text, "?", "shortcut help stays compact")
@@ -114,6 +115,7 @@ ShellRoot {
                 mail.page = 2 // prevent the infinite-scroll fixture from appending while testing short chrome
                 mail.messages = mail.messages.slice(0, 3)
                 wait(30)
+                equal(inbox.width, 310, "message count does not resize the list")
                 equal(footer.text, "3 unread · 3 loaded", "short-list counts update")
                 equal(panel.contentHeight, fullPageHeight, "short mailbox page keeps a fixed panel height")
                 mail.folderName = "Projects / 2026"

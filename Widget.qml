@@ -48,6 +48,7 @@ BarWidget {
         return accounts.indexOf(preferred) !== -1 ? preferred : accounts[0]
     }
     property string pane: "list"
+    readonly property int inboxPaneWidth: 310
     property string cursorId: ""
     property string pendingPreviewId: ""
     property int pendingPreviewGeneration: -1
@@ -897,9 +898,9 @@ BarWidget {
                 spacing: 16
                 InboxPane {
                     id: sidebar
-                    Layout.preferredWidth: Math.min(310, content.width * 0.35)
-                    Layout.minimumWidth: 0
-                    Layout.maximumWidth: Layout.preferredWidth
+                    Layout.preferredWidth: root.inboxPaneWidth
+                    Layout.minimumWidth: root.inboxPaneWidth
+                    Layout.maximumWidth: root.inboxPaneWidth
                     demo: mail.demo
                     unread: mail.unread
                     loading: mail.loading

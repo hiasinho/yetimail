@@ -74,8 +74,9 @@ ShellRoot {
             } else if (test.phase === 10 && !mail.loading && mail.page === 2) {
                 mail.deleteMessage("same")
                 test.phase++
-            } else if (test.phase === 11 && !mail.deleting && !mail.loading) {
-                if (!test.check(mail.page === 1 && mail.messages.length === 4, "empty last page falls back")) return
+            } else if (test.phase === 11 && !mail.deleting && !mail.loading && !mail.refreshing && !mail.listJob) {
+                if (!test.check(mail.page === 1 && mail.messages.length === 4,
+                    "continuous list rebuild after delete: page=" + mail.page + " messages=" + mail.messages.length)) return
                 mail.account = ""
                 test.phase++
             } else if (test.phase === 12 && !mail.loading && test.has("same")) {

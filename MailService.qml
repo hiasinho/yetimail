@@ -262,6 +262,8 @@ Item {
     property bool loadingMore: false
     property string loadMoreError: ""
     property var loadedPageValues: ({})
+    property var pendingNewestPage: null
+    property bool newMessagesAvailable: false
     property int cacheFreshMs: 120000
     // marking stays latched across the whole serial batch, including deferred launches.
     property bool marking: false
@@ -452,20 +454,56 @@ Item {
         var views = Object.assign({}, preferredPages)
         views[mailboxViewKey(account, folderId)] = page
         preferredPages = views
-        loading = false
-        loadingMore = false
+    }
+
+    function discardOlderSnapshots(c) {
+        var next = Object.assign({}, pageSnapshots)
+        Object.keys(next).forEach(function(key) {
+            var entry = next[key]
+            if (entry.context.config === c.config && entry.context.account === c.account
+                && entry.context.demo === c.demo && entry.context.folder === c.folder && entry.context.page > 1)
+                delete next[key]
+        })
+        pageSnapshots = next
+        snapshotOrder = snapshotOrder.filter(function(key) { return !!next[key] })
     }
 
     function showPage(c, data) {
         var value = normalizedPage(c, data)
         var next = Object.assign({}, loadedPageValues)
-        // Numbered IMAP pages shift when newer mail arrives. Never combine a
-        // changed first chunk with tails from an older generation.
+        // Numbered IMAP pages shift when newer mail arrives. Keep the current
+        // working set stable until the user accepts the new list generation.
+        if (c.page === 1 && next[1] && !sameMessageOrder(next[1], value) && next[2]) {
+            discardOlderSnapshots(c)
+            // Reject every queued/in-flight tail from the shifted numbered
+            // pages, then retain only the new head under the fresh revision.
+            fenceLists(c, true)
+            storePage(listContext(c.account, c.folder, 1), value)
+            pendingNewestPage = value
+            newMessagesAvailable = true
+            loadMoreError = ""
+            loading = false
+            return
+        }
         if (c.page === 1 && next[1] && !sameMessageOrder(next[1], value)) next = ({})
         next[c.page] = value
         loadedPageValues = next
         rebuildContinuousMessages()
+        if (c.page === 1) loading = false
+        else loadingMore = false
         loadMoreError = ""
+    }
+
+    function applyNewestMessages() {
+        if (!newMessagesAvailable || !pendingNewestPage) return false
+        var next = ({})
+        next[1] = pendingNewestPage
+        loadedPageValues = next
+        pendingNewestPage = null
+        newMessagesAvailable = false
+        loadMoreError = ""
+        rebuildContinuousMessages()
+        return true
     }
 
     function messagePage(id) {
@@ -486,6 +524,16 @@ Item {
             })})
         })
         loadedPageValues = next
+        if (pendingNewestPage) {
+            pendingNewestPage = Object.assign({}, pendingNewestPage, {messages: pendingNewestPage.messages.map(function(row) {
+                return String(row.id) === String(id) ? Object.assign({}, row, {unread: !seen}) : row
+            })})
+        }
+    }
+
+    function discardPendingNewest() {
+        pendingNewestPage = null
+        newMessagesAvailable = false
     }
 
     function restoreLoadedPages() {
@@ -521,7 +569,10 @@ Item {
         pageSnapshots = next
         snapshotOrder = snapshotOrder.filter(function(key) { return !!next[key] })
         listQueue = listQueue.filter(function(job) { return root.validListContext(job.context) })
-        if (scopes.indexOf(listContext(account, folderId, page).scope) >= 0) refreshing = false
+        if (scopes.indexOf(listContext(account, folderId, page).scope) >= 0) {
+            refreshing = false
+            loadingMore = false
+        }
     }
 
     function patchSnapshots(c, id, seen) {
@@ -604,8 +655,8 @@ Item {
             }
             if (job.probe) queueList(c, false, current)
             else if (current) {
-                loading = false
-                loadingMore = false
+                if (c.page === 1) loading = false
+                else loadingMore = false
                 refreshing = false
             }
         }
@@ -898,6 +949,8 @@ Item {
         page = 1
         hasNext = false
         loadedPageValues = ({})
+        pendingNewestPage = null
+        newMessagesAvailable = false
         loadingMore = false
         loadMoreError = ""
         demoSeen = ({})
@@ -919,7 +972,7 @@ Item {
     function refresh() { fetchPage(1, true) }
 
     function loadMore() {
-        if (!hasNext || loadingMore || loadMoreError || loading || deleting || movePending || marking) return false
+        if (!hasNext || loadingMore || loadMoreError || newMessagesAvailable || loading || deleting || movePending || marking) return false
         fetchPage(page + 1, false)
         return true
     }
@@ -1049,6 +1102,7 @@ Item {
             return false
         }
         invalidatePrefetch()
+        discardPendingNewest()
         deleteContext = listContext(account, folderId, messagePage(id))
         fenceLists(deleteContext, true)
         deleteGeneration = generation
@@ -1204,6 +1258,7 @@ Item {
             return false
         }
         invalidatePrefetch()
+        discardPendingNewest()
         fenceLists(listContext(account, folderId, page), true)
         if (!moveQueue.length) moveSequence = messages.map(function(message) { return message.id })
         var entries = ids.map(function(id) {

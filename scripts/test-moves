@@ -30,7 +30,7 @@ case "$operation" in
         printf '%s\n' '{"folders":[{"id":"in","name":"Inbox","role":"inbox"},{"id":"archive","name":"Archive","role":"archive"},{"id":"trash","name":"Trash","role":"trash"},{"id":"flaky","name":"Flaky"},{"id":"fail","name":"Fail"},{"id":"bad","name":"Bad"},{"id":"launch","name":"Launch"}]}' ;;
     list)
         rows= sep=
-        if [ "$account" = page-offline ] && [ "$page" = 2 ]; then ids=same; else ids='same other third'; fi
+        if [ "$account" = page-offline ] && [ "$page" = 2 ]; then ids=older; else ids='same other third'; fi
         for message_id in $ids; do
             [ -f "$YETIMAIL_STATE/moved-$account-$message_id" ] && continue
             rows="$rows$sep{\"id\":\"$message_id\",\"subject\":\"$account-$message_id\",\"unread\":true}"
@@ -168,14 +168,15 @@ ShellRoot {
             } else if (test.phase === 19 && mail.messages.length === 3 && !mail.loading) {
                 mail.nextPage()
                 test.phase++
-            } else if (test.phase === 20 && mail.page === 2 && mail.messages.length === 1 && !mail.loading) {
+            } else if (test.phase === 20 && mail.page === 2 && mail.messages.length === 4 && !mail.loadingMore) {
                 mail.loadFolders()
                 test.phase++
             } else if (test.phase === 21 && mail.foldersLoaded) {
-                mail.moveMessage("same", "archive")
+                mail.moveMessage("older", "archive")
                 test.phase++
-            } else if (test.phase === 22 && !mail.movePending && !mail.loading) {
-                if (!test.check(mail.page === 1 && mail.messages.length === 2, "empty final page falls back")) return
+            } else if (test.phase === 22 && !mail.movePending && !mail.loading && !mail.refreshing && !mail.listJob) {
+                if (!test.check(mail.page === 1 && mail.messages.length === 3,
+                    "cross-chunk move rebuilds the continuous list")) return
                 mail.account = "batch-offline"
                 test.phase = 30
             } else if (test.phase === 30 && mail.messages.length === 3 && !mail.loading) {

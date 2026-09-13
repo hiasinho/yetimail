@@ -234,7 +234,9 @@ lists = [e for e in starts if e['operation'] == 'list']
 # Exact calls catch implicit accounts, duplicate probes, and accidental pagination.
 expected = [('A', True, 'old'), ('A', False, 'old')]
 if scenario in ('switch', 'stale'):
-    expected += [('B', True, 'old'), ('B', False, 'old'), ('A', False, 'old')]
+    # Returning to a fresh in-memory folder snapshot is synchronous and does
+    # not launch another network revalidation.
+    expected += [('B', True, 'old'), ('B', False, 'old')]
 elif scenario == 'warm':
     expected += [('B', True, 'old'), ('C', True, 'old'), ('B', False, 'old'), ('C', False, 'old')]
 elif scenario in ('refresh', 'config'):

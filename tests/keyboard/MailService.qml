@@ -164,7 +164,9 @@ Item {
     readonly property bool hasNext: page === 1
     property bool loadingMore: false
     property string loadMoreError: ""
+    property bool newMessagesAvailable: false
     property int cacheFreshMs: 120000
+    function applyNewestMessages() { newMessagesAvailable = false; return true }
     readonly property int unread: messages.filter(function(m) { return m.unread }).length
     property var calls: []
     property var fixtures: []

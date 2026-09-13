@@ -246,6 +246,34 @@ class MessageCache:
         except _FAILURES:
             return False
 
+    def replace_context(self, key, value, *, generation):
+        """Atomically invalidate a context and store one replacement entry.
+
+        The original pre-fetch generation must still match, so a concurrent
+        mutation or explicit clear always wins over a stale refresh.
+        """
+        if generation is None:
+            return False
+        try:
+            parts = key.parts()
+            payload = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+            size = len(payload.encode("utf-8"))
+            if size > min(self.max_entry_bytes, self.max_bytes):
+                return False
+            with self._connect() as connection:
+                if generation != self._generation(connection, key):
+                    return False
+                connection.execute("INSERT OR REPLACE INTO epochs VALUES (?, ?)",
+                                   (json.dumps((key.context, None, None)), uuid.uuid4().hex))
+                connection.execute("DELETE FROM messages WHERE context=?", (key.context,))
+                now = self.clock()
+                connection.execute("""INSERT OR REPLACE INTO messages VALUES
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?)""", (*parts, payload, size, now, self._tick(connection)))
+                self._prune(connection, now)
+            return True
+        except _FAILURES:
+            return False
+
     def invalidate(self, context, mailbox=None, message_id=None):
         """Remove a context, mailbox, or message across ALL parser versions.
 

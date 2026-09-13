@@ -77,9 +77,12 @@ BarWidget {
         saveReaderState()
         if (!mail.ready || !mail.messages.length || !cursorId) return
         var next = Object.assign({}, viewStateByMailbox)
+        var anchor = sidebar.listScrollAnchor()
         next[viewStateKey(mail.account, mail.folderId)] = {
             cursorId: String(cursorId || ""),
-            contentY: sidebar.listScrollY()
+            contentY: sidebar.listScrollY(),
+            anchorId: anchor.id,
+            anchorOffset: anchor.offset
         }
         viewStateByMailbox = next
     }
@@ -87,8 +90,19 @@ BarWidget {
         var state = viewStateByMailbox[viewStateKey(mail.account, mail.folderId)]
         if (state && mail.messages.some(function(message) { return String(message.id) === String(state.cursorId) })) {
             cursorId = String(state.cursorId)
-            sidebar.restoreListScroll(state.contentY)
+            sidebar.restoreListScroll(state.contentY, state.anchorId, state.anchorOffset)
         } else syncCursor()
+    }
+    function showNewestMessages() {
+        var key = viewStateKey(mail.account, mail.folderId)
+        var states = Object.assign({}, viewStateByMailbox)
+        delete states[key]
+        viewStateByMailbox = states
+        clearSelection()
+        if (mail.applyNewestMessages()) {
+            cursorId = mail.messages.length ? String(mail.messages[0].id) : ""
+            sidebar.restoreListScroll(0)
+        }
     }
     property var selectedIds: []
     property string selectionAnchorId: ""
@@ -896,6 +910,7 @@ BarWidget {
                     hasNext: mail.hasNext
                     loadingMore: mail.loadingMore
                     loadMoreError: mail.loadMoreError
+                    newMessagesAvailable: mail.newMessagesAvailable
                     deleting: mail.deleting
                     moving: mail.moving
                     pendingMoves: mail.pendingMoves
@@ -929,6 +944,7 @@ BarWidget {
                     onBulkMoveRequested: { root.focusList(); root.openMovePicker() }
                     onLoadMoreRequested: mail.loadMore()
                     onRetryLoadMoreRequested: mail.retryLoadMore()
+                    onShowNewMessagesRequested: root.showNewestMessages()
                     onHelpRequested: root.toggleHelp()
                     onRetryMovesRequested: mail.retryMoves()
                     onCancelMovesRequested: mail.cancelPendingMoves()

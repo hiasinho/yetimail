@@ -77,6 +77,19 @@ class ListCacheTest(unittest.TestCase):
         self.assertFalse(self.probe()["hit"])
         self.assertEqual(self.run.call_count, 1)
 
+    def test_changed_newest_page_invalidates_cached_tail(self):
+        self.invoke()
+        self.response = {"envelopes": [{"id": "2", "subject": "Older", "date": "2025-12-31",
+                                         "from": [{"email": "offline@example.test"}]}]}
+        self.invoke("list", "--page", "2")
+        self.assertTrue(self.probe("--page", "2")["hit"])
+
+        self.response = {"envelopes": [{"id": "new", "subject": "New arrival", "date": "2026-01-02",
+                                         "from": [{"email": "offline@example.test"}]}]}
+        self.invoke()
+        self.assertEqual(self.probe()["value"]["messages"][0]["id"], "new")
+        self.assertFalse(self.probe("--page", "2")["hit"])
+
     def test_failed_refresh_retains_snapshot_and_disabled_never_fetches(self):
         self.invoke()
         self.run.side_effect = OSError("private error")

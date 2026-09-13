@@ -451,6 +451,17 @@ def list_messages(args):
     lookup = cache.get(list_snapshot_key(context, args)) if cache else None
     result = fetch_list_messages(args)
     if cache and lookup and cache_context(args) == context:
+        # A changed newest page means every numbered tail may have shifted.
+        # Invalidate the account's list snapshots before storing the new head,
+        # so a later continuous-list append cannot restore an old disk page.
+        old = lookup.value if lookup.hit and valid_list_snapshot(lookup.value, args.page) else None
+        if args.page == 1 and old is not None:
+            old_ids = [message["id"] for message in old["messages"]]
+            new_ids = [message["id"] for message in result["messages"]]
+            if old_ids != new_ids:
+                cache.replace_context(list_snapshot_key(context, args), result,
+                                      generation=lookup.generation)
+                return result
         cache.put(list_snapshot_key(context, args), result, generation=lookup.generation)
     return result
 

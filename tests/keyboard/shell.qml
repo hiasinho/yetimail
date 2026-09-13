@@ -103,19 +103,18 @@ ShellRoot {
                 var title = find(widget, function(item) { return item.objectName === "currentFolderTitle" })
                 var footer = find(widget, function(item) { return item.objectName === "inboxFooterStatus" })
                 var panel = find(widget, function(item) { return item.objectName === "mailPanel" })
-                var newer = find(widget, function(item) { return item.objectName === "newerPageButton" })
                 var help = find(widget, function(item) { return item.objectName === "shortcutHelpButton" })
                 var inbox = find(widget, function(item) { return item.objectName === "inboxPane" })
                 var refresh = find(widget, function(item) { return item.objectName === "inboxRefreshButton" })
                 check(title !== null && footer !== null && panel !== null && inbox !== null && refresh !== null, "inbox chrome found")
                 equal(title.text, "INBOX / DEMO", "heading names current folder")
-                equal(footer.text, "50 unread · 50 msgs · p1", "footer combines unread, count, and page compactly")
-                check(!newer.enabled, "Newer is disabled on page one")
+                equal(footer.text, "50 unread · 50 loaded", "footer reports the loaded working set")
                 equal(help.text, "?", "shortcut help stays compact")
                 var fullPageHeight = panel.contentHeight
+                mail.page = 2 // prevent the infinite-scroll fixture from appending while testing short chrome
                 mail.messages = mail.messages.slice(0, 3)
                 wait(30)
-                equal(footer.text, "3 unread · 3 msgs · p1", "short-page counts update")
+                equal(footer.text, "3 unread · 3 loaded", "short-list counts update")
                 equal(panel.contentHeight, fullPageHeight, "short mailbox page keeps a fixed panel height")
                 mail.folderName = "Projects / 2026"
                 wait(30)
@@ -224,8 +223,8 @@ ShellRoot {
                     function() { mail.folderId = "INBOX" }, function() { widget.selectedAccount = "beta" },
                     function() { widget.cursorId = "alpha/9" }, function() { mail.loading = true },
                     function() { mail.messages = mail.messages.slice() }, function() { mail.readRequest++ },
-                    function() { mail.listRequest++ }, function() { mail.page++ },
-                    function() { mail.config += "changed" }, function() { widget.pane = "reader" },
+                    function() { mail.listRequest++ }, function() { mail.config += "changed" },
+                    function() { widget.pane = "reader" },
                     function() { mail.messages = mail.messages.map(function(row) {
                         return Object.assign({}, row, {subject: "changed"}) }) }]
                 for (var mutate of mutations) {
@@ -350,12 +349,12 @@ ShellRoot {
                 equal(widget.selectedCount, 0, "Escape clears selection first")
                 check(widget.opened)
                 press(Qt.Key_A, Qt.ControlModifier)
-                equal(widget.selectedCount, 50, "Ctrl+A selects only current page")
+                equal(widget.selectedCount, 50, "Ctrl+A selects the currently loaded messages")
                 press(Qt.Key_N)
                 equal(mail.page, 2)
-                equal(widget.selectedCount, 0, "page change clears selection")
-                equal(mail.messages.length, 13)
-                press(Qt.Key_P)
+                equal(widget.selectedCount, 50, "appending does not select newly loaded messages")
+                equal(mail.messages.length, 63)
+                widget.clearSelection()
                 widget.cursorId = "alpha/1"
                 press(Qt.Key_Space); press(Qt.Key_J); press(Qt.Key_J); press(Qt.Key_Space)
                 press(Qt.Key_X)
@@ -728,7 +727,7 @@ ShellRoot {
                 press(Qt.Key_K); equal(widget.cursorId, "alpha/1")
                 press(Qt.Key_K); equal(widget.cursorId, "alpha/1")
                 press(Qt.Key_G, Qt.ShiftModifier); equal(widget.cursorId, "alpha/50")
-                press(Qt.Key_J); equal(widget.cursorId, "alpha/50")
+                press(Qt.Key_J); equal(widget.cursorId, "alpha/51")
                 press(Qt.Key_G); press(Qt.Key_G); equal(widget.cursorId, "alpha/1")
                 press(Qt.Key_D, Qt.ControlModifier); check(widget.cursorIndex > 0)
                 press(Qt.Key_U, Qt.ControlModifier); equal(widget.cursorId, "alpha/1")
@@ -805,13 +804,11 @@ ShellRoot {
             function test_pages_accounts() {
                 equal(widget.currentAccount, "alpha", "invalid preferred account falls back")
                 press(Qt.Key_Return); check(area.activeFocus)
-                press(Qt.Key_N); equal(mail.page, 2); equal(mail.messages.length, 13)
-                equal(widget.cursorId, "alpha/51"); equal(widget.pane, "list")
-                equal(mail.selectedId, ""); equal(mail.message, null)
+                press(Qt.Key_N); equal(mail.page, 2); equal(mail.messages.length, 63)
+                equal(widget.cursorId, "alpha/1"); equal(widget.pane, "reader")
+                equal(mail.selectedId, "alpha/1"); check(mail.message !== null)
                 press(Qt.Key_N); equal(mail.page, 2)
-                press(Qt.Key_P); equal(mail.page, 1); equal(widget.cursorId, "alpha/1")
-                press(Qt.Key_P); equal(mail.page, 1)
-                press(Qt.Key_Return); check(area.activeFocus)
+                press(Qt.Key_P); equal(mail.page, 2, "previous-page shortcut is removed")
                 press(Qt.Key_BracketRight); equal(widget.currentAccount, "beta")
                 equal(widget.cursorId, "beta/1"); equal(mail.selectedId, "")
                 press(Qt.Key_BracketRight); equal(widget.currentAccount, "alpha")

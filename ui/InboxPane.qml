@@ -17,6 +17,7 @@ ColumnLayout {
     required property bool hasNext
     required property bool loadingMore
     required property string loadMoreError
+    required property bool newMessagesAvailable
     required property bool deleting
     required property bool moving
     required property int pendingMoves
@@ -50,6 +51,7 @@ ColumnLayout {
     signal bulkMoveRequested()
     signal loadMoreRequested()
     signal retryLoadMoreRequested()
+    signal showNewMessagesRequested()
     signal helpRequested()
     signal retryMovesRequested()
     signal cancelMovesRequested()
@@ -62,8 +64,26 @@ ColumnLayout {
     function focusList() { inbox.forceActiveFocus() }
     function reveal(index) { inbox.positionViewAtIndex(index, ListView.Contain) }
     function listScrollY() { return inbox.contentY }
-    function restoreListScroll(contentY) {
+    function listScrollAnchor() {
+        var index = inbox.indexAt(1, inbox.contentY + 1)
+        var item = index >= 0 ? inbox.itemAtIndex(index) : null
+        return index >= 0 && view.messages[index]
+            ? {id: String(view.messages[index].id), offset: item ? inbox.contentY - item.y : 0}
+            : {id: "", offset: 0}
+    }
+    function restoreListScroll(contentY, anchorId, anchorOffset) {
         Qt.callLater(function() {
+            var index = anchorId ? view.messages.findIndex(function(row) { return String(row.id) === String(anchorId) }) : -1
+            if (index >= 0) {
+                inbox.positionViewAtIndex(index, ListView.Beginning)
+                Qt.callLater(function() {
+                    var item = inbox.itemAtIndex(index)
+                    var maximum = Math.max(0, inbox.contentHeight - inbox.height)
+                    var anchored = item ? item.y + (Number(anchorOffset) || 0) : Number(contentY) || 0
+                    inbox.contentY = Math.max(0, Math.min(maximum, anchored))
+                })
+                return
+            }
             var maximum = Math.max(0, inbox.contentHeight - inbox.height)
             inbox.contentY = Math.max(0, Math.min(maximum, Number(contentY) || 0))
         })
@@ -211,6 +231,7 @@ ColumnLayout {
             spacing: 4
             MailButton { objectName: "retryMovesButton"; text: "Retry"; visible: view.movePaused; onClicked: view.retryMovesRequested() }
             MailLabel { objectName: "inboxFooterStatus"; Layout.fillWidth: true; Layout.minimumWidth: 0; text: view.footerStatus(); horizontalAlignment: Text.AlignHCenter; opacity: 0.55; font.pixelSize: 10; elide: Text.ElideRight }
+            MailButton { objectName: "newMessagesButton"; text: "New messages"; visible: view.newMessagesAvailable; onClicked: view.showNewMessagesRequested() }
             MailLabel { objectName: "loadMoreStatus"; visible: view.loadingMore; text: "Loading older…"; opacity: 0.55; font.pixelSize: 10 }
             MailButton { objectName: "retryLoadMoreButton"; text: "Retry older"; visible: !!view.loadMoreError; enabled: !view.busy; tooltipText: view.loadMoreError; onClicked: view.retryLoadMoreRequested() }
             MailButton { objectName: "cancelMovesButton"; text: "Cancel"; visible: view.movePaused; onClicked: view.cancelMovesRequested() }

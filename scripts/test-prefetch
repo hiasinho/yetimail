@@ -139,7 +139,7 @@ ShellRoot {
                 test.advance(); return
             case 3:
                 // Allow time for accidental queued launches after the first exit.
-                if (elapsed < (s === "debounce" || s === "failure" ? 2400 : 1500)) return
+                if (elapsed < (s === "debounce" || s === "failure" || s === "page" ? 2400 : 1500)) return
                 if (!test.check(!mail.prefetching && !mail.reading && !mail.loading &&
                                 !mail.prefetchQueue.length, "requests did not drain")) return
                 if (s === "promotion" || s === "different") {
@@ -176,7 +176,7 @@ with open(path) as stream:
     events = [json.loads(line) for line in stream]
 reads = [e for e in events if e['operation'] == 'read']
 starts = [e for e in reads if e['event'] == 'start']
-expected = {'debounce': list('bcd'), 'failure': list('abc'),
+expected = {'debounce': list('bcd'), 'failure': list('abc'), 'page': list('abc'),
             'different': list('ae'), 'pending-withdrawal': []}.get(scenario, ['a'])
 assert [e['id'] for e in starts] == expected, (scenario, 'duplicate/stale/missing read', starts)
 active = set()

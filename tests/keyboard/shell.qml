@@ -67,6 +67,33 @@ ShellRoot {
                 widget.showHelp = false
                 widget.focusList()
                 wait(50)
+                mail.selectedId = ""
+                mail.message = null
+                mail.calls = []
+            }
+            function test_initial_preview_and_empty_inbox() {
+                widget.opened = false
+                widget.opened = true
+                wait(30)
+                equal(widget.cursorId, "alpha/1", "the first message is highlighted on launch")
+                equal(mail.selectedId, "alpha/1", "the highlighted message is previewed on launch")
+                check(mail.message !== null, "the initial message body is loaded")
+                check(area.text.indexOf("Select a message") === -1, "the reader has no instructional placeholder")
+
+                mail.messages = []
+                mail.selectedId = ""
+                mail.message = null
+                wait(30)
+                equal(area.text, "Nothing to do.\n\nYou're all caught up.", "an empty inbox shows the completion state")
+
+                widget.showHelp = true
+                mail.messages = mail.fixtures.slice(0, 50)
+                wait(30)
+                equal(mail.selectedId, "", "an overlay pauses the initial preview")
+                equal(widget.pendingPreviewId, "alpha/1", "the paused initial preview is retained")
+                widget.showHelp = false
+                wait(30)
+                equal(mail.selectedId, "alpha/1", "dismissing the overlay resumes the initial preview")
             }
             function test_filled_material_icons() {
                 equal(widget.icons.mail, "󰇮")
@@ -300,6 +327,8 @@ ShellRoot {
                 widget.moveToRole(widget.targetId, "trash")
                 equal(mail.calls.length, 0, "closed panel is inert")
                 widget.opened = true
+                wait(30)
+                mail.calls = []
                 var folders = mail.folders
                 for (var unavailable of [[], folders.concat([{id: "Trash2", name: "Trash2", role: "trash"}, {id: "Archive2", name: "Archive2", role: "archive"}])]) {
                     mail.folders = unavailable
@@ -618,8 +647,9 @@ ShellRoot {
                 press(Qt.Key_G, Qt.ShiftModifier); press(Qt.Key_L)
                 check(!widget.showFolders)
                 equal(mail.folderId, "Projects/2026"); equal(mail.folderName, "Projects / 2026")
-                equal(mail.page, 1); equal(mail.selectedId, ""); equal(widget.pane, "list")
-                equal(mail.calls[mail.calls.length - 1].operation, "folder", "l chooses, never reads")
+                equal(mail.page, 1); equal(mail.selectedId, "alpha/1", "folder navigation previews its highlighted message"); equal(widget.pane, "list")
+                check(mail.calls.some(function(call) { return call.operation === "folder" && call.id === "Projects/2026" }),
+                    "l chooses the highlighted folder")
                 var roles = [Qt.Key_I, Qt.Key_S, Qt.Key_A, Qt.Key_T]
                 var ids = ["INBOX", "Sent", "Archive", "Trash"]
                 for (var i = 0; i < roles.length; i++) {
@@ -642,7 +672,7 @@ ShellRoot {
                 press(Qt.Key_F); check(!widget.showLinks)
                 press(Qt.Key_J); press(Qt.Key_Return)
                 equal(urls.length, 0, "picker Enter never opens a link")
-                equal(mail.calls[mail.calls.length - 1].operation, "folder")
+                check(mail.calls.some(function(call) { return call.operation === "folder" }), "picker Enter chooses a folder")
                 var flags = ["moving", "marking", "savingAttachment", "openingAttachment"]
                 for (i = 0; i < flags.length; i++) {
                     mail[flags[i]] = true
@@ -724,9 +754,10 @@ ShellRoot {
                 var status = find(widget, function(item) { return item.objectName === "folderStatus" })
                 mail.foldersLoading = true
                 check(!status.visible, "cached folders hide background refresh state")
-                var count = mail.calls.length
+                var folderChoices = mail.calls.filter(function(call) { return call.operation === "folder" }).length
                 press(Qt.Key_Return)
-                equal(mail.calls.length, count + 1, "cached folders remain selectable while refreshing")
+                equal(mail.calls.filter(function(call) { return call.operation === "folder" }).length, folderChoices + 1,
+                    "cached folders remain selectable while refreshing")
                 check(!widget.showFolders)
                 mail.foldersLoading = false
                 mail.folders = originalFolders
@@ -827,7 +858,7 @@ ShellRoot {
                 press(Qt.Key_N); equal(mail.page, 2)
                 press(Qt.Key_P); equal(mail.page, 2, "previous-page shortcut is removed")
                 press(Qt.Key_BracketRight); equal(widget.currentAccount, "beta")
-                equal(widget.cursorId, "beta/1"); equal(mail.selectedId, "")
+                equal(widget.cursorId, "beta/1"); equal(mail.selectedId, "beta/1", "account switching previews its highlighted message")
                 press(Qt.Key_BracketRight); equal(widget.currentAccount, "alpha")
                 press(Qt.Key_BracketLeft); equal(widget.currentAccount, "beta")
                 press(Qt.Key_G); press(Qt.Key_1); equal(widget.currentAccount, "alpha", "g1 goes to the first allowed account")
@@ -1061,7 +1092,7 @@ ShellRoot {
             }
             function cleanupTestCase() {
                 console.log("KEYBOARD_RESULTS passed=" + qtest_results.passCount + " failed=" + qtest_results.failCount)
-                if (qtest_results.failCount === 0 && qtest_results.passCount === 28)
+                if (qtest_results.failCount === 0 && qtest_results.passCount === 29)
                     console.log("YETIMAIL_KEYBOARD_OK")
                 Qt.quit()
             }

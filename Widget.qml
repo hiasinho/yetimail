@@ -87,12 +87,14 @@ BarWidget {
         }
         viewStateByMailbox = next
     }
-    function restoreViewState() {
+    function restoreViewState(preview) {
+        var shouldPreview = !!preview || !cursorId
         var state = viewStateByMailbox[viewStateKey(mail.account, mail.folderId)]
         if (state && mail.messages.some(function(message) { return String(message.id) === String(state.cursorId) })) {
             cursorId = String(state.cursorId)
             sidebar.restoreListScroll(state.contentY, state.anchorId, state.anchorOffset)
         } else syncCursor()
+        if (shouldPreview) previewCurrent()
     }
     function showNewestMessages() {
         var key = viewStateKey(mail.account, mail.folderId)
@@ -644,9 +646,10 @@ BarWidget {
         previewCurrent()
     }
     function previewCurrent() {
-        if (!opened || pane !== "list" || !cursorId || showHelp || showAccounts || showFolders) return
+        if (!opened || pane !== "list" || !cursorId) return
         pendingPreviewId = cursorId
         pendingPreviewGeneration = mail.generation
+        if (confirmingDelete || showSettings || showHelp || showAccounts || showFolders) return
         if (mail.reading || mail.accountConfigBlocked || mail.deleting || mail.loading || mail.marking || mail.movePaused
             || mail.savingAttachment || mail.openingAttachment) return
         pendingPreviewId = ""
@@ -742,12 +745,13 @@ BarWidget {
     // Permission changes take effect synchronously; only the initial warm is delayed.
     onAccountsChanged: warmAllowedAccounts()
     onShowHelpChanged: if (!showHelp) Qt.callLater(resumePendingPreview)
+    onShowSettingsChanged: if (!showSettings) Qt.callLater(resumePendingPreview)
     onShowAccountsChanged: if (!showAccounts) Qt.callLater(resumePendingPreview)
     onShowFoldersChanged: if (!showFolders) Qt.callLater(resumePendingPreview)
     onCurrentAccountChanged: { cancelDelete(false); clearSelection(); moveNextId = ""; moveTargetIds = []; movePicker = false; pendingPreviewId = ""; pendingPreviewGeneration = -1; cursorId = ""; pane = "list"; showHelp = false; showSettings = false; showAccounts = false; showFolders = false; showLinks = false; showHeaders = false; showAttachments = false; accountWarmTimer.restart() }
     onOpenedChanged: {
         cancelDelete(false)
-        if (opened) { showHelp = false; mail.resumeAccountConfig(); Qt.callLater(focusList) }
+        if (opened) { showHelp = false; mail.resumeAccountConfig(); Qt.callLater(focusList); Qt.callLater(function() { root.restoreViewState(true) }) }
         else { clearSelection(); pendingPreviewId = ""; pendingPreviewGeneration = -1; showSettings = false; showAccounts = false; showFolders = false; showHelp = false; mail.cancelAttachmentOpen() }
         updatePrefetchSelection()
     }
@@ -990,7 +994,9 @@ BarWidget {
                     id: readerPane
                     panelWidth: content.width
                     message: mail.message
+                    messageCount: mail.messages.length
                     folderName: mail.folderName
+                    listLoading: mail.loading
                     listError: mail.listError
                     actionError: mail.actionError
                     foldersError: mail.foldersError

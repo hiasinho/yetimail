@@ -76,7 +76,7 @@ Friendly labels can also be edited in the overview. They affect only Yetimail's 
 
 The Mail access toggle updates the widget's `accounts` allowlist through the Omarchy shell settings API. It never enables accounts merely because they appear in Himalaya, and the final enabled account cannot be disabled from the form. Enabling a configured account is an explicit grant for Yetimail to query it. **Move up** and **Move down** reorder enabled accounts in Yetimail's dropdown; `g1` through `g9` use this same one-based order. Reordering does not change Himalaya's default or the plugin's explicit startup `account`. Changing the Himalaya default affects commands that omit an account; changing the Yetimail label or allowlist does not.
 
-With an empty allowlist, the single-account behavior is unchanged. An empty `account` or `config` uses Himalaya's default. A nonempty config is a path passed directly to Himalaya. `demo: true` uses synthetic messages. `q` or Close dismisses the panel. List navigation previews the highlighted message; rapid navigation waits for the current read to finish, then loads only the latest highlighted message.
+With an empty allowlist, the single-account behavior is unchanged. An empty `account` or `config` uses Himalaya's default. A nonempty config is a path passed directly to Himalaya. `demo: true` uses synthetic messages. `q` or Close dismisses the panel. Opening the panel immediately previews the highlighted message; an empty inbox shows a simple all-caught-up state. List navigation keeps the preview synchronized, and rapid navigation waits for the current read to finish before loading only the latest highlighted message.
 
 ## Keyboard navigation
 

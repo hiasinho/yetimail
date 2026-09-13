@@ -112,7 +112,7 @@ ShellRoot {
     MailService {
         id: mail
         demo: test.demoMode
-        account: test.demoMode ? "" : "hiash"
+        account: test.demoMode ? "" : "personal"
         onMessagesChanged: {
             if (!test.demoMode && messages.length)
                 test.check(messages[0].subject.indexOf((account || "default") + " page ") === 0,
@@ -149,14 +149,14 @@ ShellRoot {
                 break
             case 1:
                 if (!test.check(mail.page === 2 && mail.messages.length === 2
-                    && mail.messages[1].subject === "hiash page 2", "older chunk appended")) return
-                mail.setRead("hiash-2", true)
+                    && mail.messages[1].subject === "personal page 2", "older chunk appended")) return
+                mail.setRead("personal-2", true)
                 if (!test.check(mail.marking && mail.messages[1].unread, "loaded-row mark waits for success")) return
                 if (!test.busyGuards()) return
                 break
             case 2:
                 if (!test.check(!mail.messages[1].unread && !mail.actionError, "loaded-row seen success")) return
-                mail.setRead("hiash-2", false)
+                mail.setRead("personal-2", false)
                 break
             case 3:
                 if (!test.check(!mail.messages[1].unread && mail.actionError === "fixture mark failure",
@@ -168,18 +168,18 @@ ShellRoot {
                     "failed older chunk retains continuous list")) return
                 mail.showPage(mail.listContext(mail.account, mail.folderId, 1), {
                     page: 1, hasNext: true, account: mail.account,
-                    messages: [{id: "hiash-new", subject: "hiash page new", unread: true}]
+                    messages: [{id: "personal-new", subject: "personal page new", unread: true}]
                 })
                 if (!test.check(mail.newMessagesAvailable && mail.messages.length === 2,
                     "changed newest chunk replaced visible older rows")) return
                 mail.applyNewestMessages()
                 if (!test.check(!mail.newMessagesAvailable && mail.page === 1
-                    && mail.messages[0].id === "hiash-new", "new list generation was not applied safely")) return
-                mail.account = "hiasinho"
+                    && mail.messages[0].id === "personal-new", "new list generation was not applied safely")) return
+                mail.account = "work"
                 break
             case 5:
                 if (!mail.messages.length) return
-                if (!test.check(mail.page === 1 && mail.messages[0].subject === "hiasinho page 1",
+                if (!test.check(mail.page === 1 && mail.messages[0].subject === "work page 1",
                     "account reset starts a new continuous list")) return
                 mail.loadMore()
                 mail.account = "final"
@@ -291,12 +291,12 @@ for scenario in fixture demo; do
     if [[ $scenario == fixture ]]; then
         # Exact sequence catches duplicate launches and mutable account/id/page snapshots.
         cat > "$work/expected.calls" <<'CALLS'
-list account=hiash id=none page=1 seen=none
-list account=hiash id=none page=2 seen=none
-mark account=hiash id=hiash-2 page=1 seen=true
-mark account=hiash id=hiash-2 page=1 seen=false
-list account=hiash id=none page=3 seen=none
-list account=hiasinho id=none page=1 seen=none
+list account=personal id=none page=1 seen=none
+list account=personal id=none page=2 seen=none
+mark account=personal id=personal-2 page=1 seen=true
+mark account=personal id=personal-2 page=1 seen=false
+list account=personal id=none page=3 seen=none
+list account=work id=none page=1 seen=none
 list account=final id=none page=1 seen=none
 list account=default id=none page=1 seen=none
 list account=batch-success id=none page=1 seen=none

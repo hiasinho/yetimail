@@ -147,36 +147,36 @@ ShellRoot {
                     if (!test.check(!test.widgetMail.loading && !test.widgetMail.messages.length && !test.widgetMail.listError,
                                     "launched before account settings injection")) return
                     if (test.ticks < 12) return
-                    test.widget.settings = {demo: true, accounts: "hiash,hiasinho", account: "gmail", config: "accounts-config"}
-                    if (!test.check(test.widget.currentAccount === "hiash" && test.widgetMail.account === "hiash",
+                    test.widget.settings = {demo: true, accounts: "personal,work", account: "gmail", config: "accounts-config"}
+                    if (!test.check(test.widget.currentAccount === "personal" && test.widgetMail.account === "personal",
                                     "invalid preferred account did not fall back to first allowed account")) return
                     test.phase = 1
                 } else if (test.phase === 1 && test.widgetMail.messages.length && !test.widgetMail.loading) {
-                    if (!test.check(test.widgetMail.messages[0].id === "hiash/accounts-config",
+                    if (!test.check(test.widgetMail.messages[0].id === "personal/accounts-config",
                                     "fallback inbox used wrong account")) return
                     test.widgetMail.readMessage(test.widgetMail.messages[0].id)
                     test.phase = 2
                 } else if (test.phase === 2 && test.widgetMail.message && !test.widgetMail.reading) {
-                    if (!test.check(test.widgetMail.message.id === "hiash/accounts-config",
+                    if (!test.check(test.widgetMail.message.id === "personal/accounts-config",
                                     "could not populate old account reader")) return
-                    test.widget.selectAccount("hiasinho")
-                    if (!test.check(test.widget.currentAccount === "hiasinho" && test.widgetMail.account === "hiasinho",
+                    test.widget.selectAccount("work")
+                    if (!test.check(test.widget.currentAccount === "work" && test.widgetMail.account === "work",
                                     "allowed account switch did not reach MailService")) return
                     if (!test.check(test.widgetMail.message === null && test.widgetMail.selectedId === "" && !test.widgetMail.messages.length,
                                     "account switch retained stale reader or inbox")) return
                     test.phase = 3
                 } else if (test.phase === 3 && test.widgetMail.messages.length && !test.widgetMail.loading) {
-                    if (!test.check(test.widgetMail.messages[0].id === "hiasinho/accounts-config" && test.widgetMail.message === null,
+                    if (!test.check(test.widgetMail.messages[0].id === "work/accounts-config" && test.widgetMail.message === null,
                                     "switched account retained stale results")) return
                     test.widget.selectAccount("gmail")
-                    if (!test.check(test.widget.currentAccount === "hiasinho" && test.widgetMail.account === "hiasinho" &&
-                                    test.widgetMail.messages.length && test.widgetMail.messages[0].id === "hiasinho/accounts-config",
+                    if (!test.check(test.widget.currentAccount === "work" && test.widgetMail.account === "work" &&
+                                    test.widgetMail.messages.length && test.widgetMail.messages[0].id === "work/accounts-config",
                                     "outside account accepted or rejection reset inbox")) return
                     test.ticks = 0
                     test.phase = 4
                 } else if (test.phase === 4 && test.ticks >= 20) {
                     // Give any incorrectly queued refresh time to reach the fixture log.
-                    if (!test.check(test.widget.currentAccount === "hiasinho" && test.widgetMail.account === "hiasinho" &&
+                    if (!test.check(test.widget.currentAccount === "work" && test.widgetMail.account === "work" &&
                                     !test.widgetMail.loading && !test.widgetMail.listError && !test.widgetMail.readError &&
                                     test.widgetMail.message === null && test.widgetMail.selectedId === "",
                                     "rejection changed account or left stale reader/errors")) return
@@ -274,10 +274,10 @@ for scenario in widget accounts race missing unlaunchable; do
             fi ;;
         accounts)
             if [[ $(wc -l < "$YETIMAIL_CALLS") != 6 ]] ||
-               grep -Evq '^(account-labels account=default config=none demo=true id=none|accounts account=default config=(none|accounts-config) demo=true id=none|(list|read) account=(hiash|hiasinho) config=accounts-config demo=true id=)' "$YETIMAIL_CALLS" ||
-               ! grep -qx 'list account=hiash config=accounts-config demo=true id=none' "$YETIMAIL_CALLS" ||
-               ! grep -qx 'read account=hiash config=accounts-config demo=true id=hiash/accounts-config' "$YETIMAIL_CALLS" ||
-               ! grep -qx 'list account=hiasinho config=accounts-config demo=true id=none' "$YETIMAIL_CALLS"; then
+               grep -Evq '^(account-labels account=default config=none demo=true id=none|accounts account=default config=(none|accounts-config) demo=true id=none|(list|read) account=(personal|work) config=accounts-config demo=true id=)' "$YETIMAIL_CALLS" ||
+               ! grep -qx 'list account=personal config=accounts-config demo=true id=none' "$YETIMAIL_CALLS" ||
+               ! grep -qx 'read account=personal config=accounts-config demo=true id=personal/accounts-config' "$YETIMAIL_CALLS" ||
+               ! grep -qx 'list account=work config=accounts-config demo=true id=none' "$YETIMAIL_CALLS"; then
                 echo 'LIFECYCLE_FAIL accounts: unexpected launches or account outside allowlist'; status=1
             fi ;;
         race)

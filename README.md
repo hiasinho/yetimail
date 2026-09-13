@@ -53,17 +53,13 @@ omarchy plugin enable hiasinho.yetimail
 
 Run from this repository's root. Enabling with defaults will query your default Himalaya account. To try the UI without any mail access first, use the isolated demo below.
 
-### Migrating from Jitsmail
-
-The plugin ID changed from `hiasinho.jitsmail` to `hiasinho.yetimail`, so existing Omarchy widget settings do not transfer automatically. Disable and remove the old plugin entry or symlink, install Yetimail as shown above, then copy the non-secret widget settings you still want into the new `hiasinho.yetimail` entry. Yetimail starts with a fresh cache and never copies cached mail from `~/.cache/jitsmail`; remove that old directory manually when you no longer need it.
-
 Settings are declared in `manifest.json` and stored in the widget's entry in `~/.config/omarchy/shell.json`. Preserve the rest of that file when editing. A widget entry looks like:
 
 ```json
 {
   "id": "hiasinho.yetimail",
-  "accounts": "hiash,hiasinho",
-  "account": "hiash",
+  "accounts": "personal,work",
+  "account": "personal",
   "config": "",
   "demo": false,
   "refreshSeconds": 120
@@ -115,7 +111,7 @@ All commands work inside the panel, including while the selectable message text 
 | `q` | Close panel |
 | `Ctrl+c` | Copy selected message text |
 
-Status changes target the selected rows when the list has a selection, otherwise the highlighted row; reader actions always target only the previewed message. `Space` or Ctrl-click toggles a row, and `Ctrl+A` selects every message loaded at that moment. Messages appended later are not selected automatically. Selected rows use an accent background and left edge instead of checkboxes. Selection survives older-chunk appends, but is cleared by account/folder changes or closing the panel, and never marks mail by itself. Only explicit `m`/`u` commands or their buttons change read status. Real status changes require an explicitly selected account (not an unnamed default); the `hiash,hiasinho` allowlist supplies this. Actions run serially and wait for each server success before updating the badge; a failure cancels the remaining unsubmitted status changes and leaves them unchanged. Previewing, opening, and navigating never mark a message automatically.
+Status changes target the selected rows when the list has a selection, otherwise the highlighted row; reader actions always target only the previewed message. `Space` or Ctrl-click toggles a row, and `Ctrl+A` selects every message loaded at that moment. Messages appended later are not selected automatically. Selected rows use an accent background and left edge instead of checkboxes. Selection survives older-chunk appends, but is cleared by account/folder changes or closing the panel, and never marks mail by itself. Only explicit `m`/`u` commands or their buttons change read status. Real status changes require an explicitly selected account (not an unnamed default); the `personal,work` allowlist supplies this. Actions run serially and wait for each server success before updating the badge; a failure cancels the remaining unsubmitted status changes and leaves them unchanged. Previewing, opening, and navigating never mark a message automatically.
 
 The list loads older messages in 50-message backend chunks about one viewport before scrolling reaches the end. Cached chunks appear immediately; only missing or stale chunks are checked in the background, and one older request runs at a time. A failed older request leaves the existing list intact and exposes Retry. The footer reports unread and loaded counts, both limited to the current loaded working set rather than the whole mailbox.
 

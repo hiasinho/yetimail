@@ -106,15 +106,6 @@ Item {
         if (folder) selectFolder(folder.id)
         else foldersError = "Folder role unavailable: " + role
     }
-    function selectFolderNumber(number) {
-        record("number", number)
-        if (number < 1 || number > folders.length) {
-            foldersError = "Mailbox " + number + " is not available."
-            return false
-        }
-        selectFolder(folders[number - 1].id)
-        return true
-    }
     function resolveFolderRole(role) {
         var matches = folders.filter(function(item) { return item.role === role })
         return matches.length === 1 ? matches[0] : null

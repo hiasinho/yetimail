@@ -11,9 +11,9 @@ Item {
     property string config: ""
     property bool demo: false
     // Folder navigation API: lazy loadFolders(); folders are {id,name,role?}.
-    // Direct, role, and one-based numeric selections return true when accepted.
-    // An empty id is Himalaya's configured Inbox alias. Shortcuts may defer
-    // until discovery finishes; unavailable destinations fail closed.
+    // selectFolder(id) / selectFolderRole(role) return true when accepted.
+    // An empty id is Himalaya's configured Inbox alias. Role shortcuts may
+    // defer until discovery finishes; unknown/ambiguous roles fail closed.
     property var folders: []
     property string folderId: ""
     property string folderName: "Inbox"
@@ -24,7 +24,6 @@ Item {
     property int foldersRequest: 0
     property int discoveryGeneration: 0
     property string pendingFolderRole: ""
-    property int pendingFolderNumber: 0
     property bool foldersReload: false
     property bool foldersProbe: false
     property var folderCacheProbed: ({})
@@ -109,9 +108,8 @@ Item {
         if (!ready || !active || deleting || movePending || marking || savingAttachment || openingAttachment || typeof id !== "string") return false
         var folder = folders.find(function(f) { return f.id === id })
         if (id && !folder) { foldersError = "Folder is not available."; return false }
-        foldersError = ""
         pendingFolderRole = ""
-        pendingFolderNumber = 0
+        foldersError = ""
         if (id === folderId) return true
         folderId = id
         folderName = folder ? folder.name : "Inbox"
@@ -119,50 +117,29 @@ Item {
         return true
     }
 
-    function retryPendingFolderSelection() {
-        if ((!pendingFolderRole && !pendingFolderNumber) || !foldersLoaded || !ready || !active
+    function retryPendingFolderRole() {
+        if (!pendingFolderRole || !foldersLoaded || !ready || !active
             || deleting || movePending || marking || savingAttachment || openingAttachment) return
         var role = pendingFolderRole
-        var number = pendingFolderNumber
         pendingFolderRole = ""
-        pendingFolderNumber = 0
-        if (role) selectFolderRole(role)
-        else selectFolderNumber(number)
+        selectFolderRole(role)
     }
     // Discovery may finish while an operation has latched. Retry next turn,
     // after exit handlers finish applying old-folder results or launching a viewer.
-    onDeletingChanged: if (!deleting) { Qt.callLater(retryPendingFolderSelection); Qt.callLater(resumeLists) }
-    onMovingChanged: if (!moving) { Qt.callLater(retryPendingFolderSelection); Qt.callLater(resumeLists) }
-    onMarkingChanged: if (!marking) { Qt.callLater(retryPendingFolderSelection); Qt.callLater(resumeLists) }
+    onDeletingChanged: if (!deleting) { Qt.callLater(retryPendingFolderRole); Qt.callLater(resumeLists) }
+    onMovingChanged: if (!moving) { Qt.callLater(retryPendingFolderRole); Qt.callLater(resumeLists) }
+    onMarkingChanged: if (!marking) { Qt.callLater(retryPendingFolderRole); Qt.callLater(resumeLists) }
 
     function resumeLists() {
         if (!ready || !active || deleting || movePending || marking) return
         Qt.callLater(startListJob)
     }
-    onSavingAttachmentChanged: if (!savingAttachment) Qt.callLater(retryPendingFolderSelection)
-    onOpeningAttachmentChanged: if (!openingAttachment) Qt.callLater(retryPendingFolderSelection)
-
-    function selectFolderNumber(number) {
-        if (!ready || !active || deleting || movePending || marking || savingAttachment || openingAttachment
-            || !Number.isInteger(number) || number < 1 || number > 9) return false
-        pendingFolderRole = ""
-        if (!foldersLoaded) {
-            pendingFolderNumber = number
-            loadFolders()
-            return true
-        }
-        pendingFolderNumber = 0
-        if (number > folders.length) {
-            foldersError = "Mailbox " + number + " is not available."
-            return false
-        }
-        return selectFolder(folders[number - 1].id)
-    }
+    onSavingAttachmentChanged: if (!savingAttachment) Qt.callLater(retryPendingFolderRole)
+    onOpeningAttachmentChanged: if (!openingAttachment) Qt.callLater(retryPendingFolderRole)
 
     function selectFolderRole(role) {
         if (!ready || !active || deleting || movePending || marking || savingAttachment || openingAttachment
             || ["inbox", "sent", "archive", "trash"].indexOf(role) < 0) return false
-        pendingFolderNumber = 0
         if (!foldersLoaded) {
             pendingFolderRole = role
             loadFolders()
@@ -872,7 +849,6 @@ Item {
         foldersError = ""
         foldersReload = false
         pendingFolderRole = ""
-        pendingFolderNumber = 0
         folderId = ""
         folderName = "Inbox"
         resetMessages(!!deferFetch)
@@ -1668,11 +1644,10 @@ Item {
                 root.foldersLoading = false
                 root.foldersProbe = false
                 if (root.foldersGeneration !== root.discoveryGeneration) {
-                    if (root.pendingFolderRole || root.pendingFolderNumber || root.foldersReload) Qt.callLater(root.loadFolders)
+                    if (root.pendingFolderRole || root.foldersReload) Qt.callLater(root.loadFolders)
                 } else if (probe) Qt.callLater(root.loadFolders)
                 else {
                     root.pendingFolderRole = ""
-                    root.pendingFolderNumber = 0
                     root.foldersError = "Could not launch Python 3 to list folders."
                 }
             })
@@ -1682,7 +1657,7 @@ Item {
             root.foldersLoading = false
             root.foldersProbe = false
             if (root.foldersGeneration !== root.discoveryGeneration) {
-                if (root.pendingFolderRole || root.pendingFolderNumber || root.foldersReload) Qt.callLater(root.loadFolders)
+                if (root.pendingFolderRole || root.foldersReload) Qt.callLater(root.loadFolders)
                 return
             }
             try {
@@ -1696,10 +1671,10 @@ Item {
                     root.folders = discovered
                     root.foldersLoaded = true
                     root.cacheFolders(discovered)
-                    root.retryPendingFolderSelection()
+                    root.retryPendingFolderRole()
                 }
             } catch (e) {
-                if (!probe) { root.pendingFolderRole = ""; root.pendingFolderNumber = 0; root.foldersError = e.message }
+                if (!probe) { root.pendingFolderRole = ""; root.foldersError = e.message }
             }
             if (probe) Qt.callLater(root.loadFolders)
         }

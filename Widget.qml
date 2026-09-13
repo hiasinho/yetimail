@@ -464,10 +464,10 @@ BarWidget {
         saveViewState()
         mail.selectFolderRole(role)
     }
-    function goFolderNumber(number) {
-        if (showHelp || showAccounts || showFolders || switchingBlocked) return
-        saveViewState()
-        mail.selectFolderNumber(number)
+    function goAccountNumber(number) {
+        if (showHelp || showAccounts || showFolders || switchingBlocked
+            || !Number.isInteger(number) || number < 1 || number > accounts.length) return
+        selectAccount(accounts[number - 1])
     }
     function toggleHelp() {
         if (confirmingDelete || showSettings) return
@@ -866,15 +866,15 @@ BarWidget {
             Shortcut { sequence: "G, S"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goFolderRole("sent") }
             Shortcut { sequence: "G, A"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goFolderRole("archive") }
             Shortcut { sequence: "G, T"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goFolderRole("trash") }
-            Shortcut { sequence: "G, 1"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goFolderNumber(1) }
-            Shortcut { sequence: "G, 2"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goFolderNumber(2) }
-            Shortcut { sequence: "G, 3"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goFolderNumber(3) }
-            Shortcut { sequence: "G, 4"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goFolderNumber(4) }
-            Shortcut { sequence: "G, 5"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goFolderNumber(5) }
-            Shortcut { sequence: "G, 6"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goFolderNumber(6) }
-            Shortcut { sequence: "G, 7"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goFolderNumber(7) }
-            Shortcut { sequence: "G, 8"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goFolderNumber(8) }
-            Shortcut { sequence: "G, 9"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goFolderNumber(9) }
+            Shortcut { sequence: "G, 1"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goAccountNumber(1) }
+            Shortcut { sequence: "G, 2"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goAccountNumber(2) }
+            Shortcut { sequence: "G, 3"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goAccountNumber(3) }
+            Shortcut { sequence: "G, 4"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goAccountNumber(4) }
+            Shortcut { sequence: "G, 5"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goAccountNumber(5) }
+            Shortcut { sequence: "G, 6"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goAccountNumber(6) }
+            Shortcut { sequence: "G, 7"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goAccountNumber(7) }
+            Shortcut { sequence: "G, 8"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goAccountNumber(8) }
+            Shortcut { sequence: "G, 9"; enabled: root.opened && !root.interactionBlocked; onActivated: root.goAccountNumber(9) }
             Shortcut { sequences: ["H", "Left"]; enabled: root.opened && !root.interactionBlocked; onActivated: root.back() }
             Shortcut { sequence: "O"; enabled: root.opened && !root.interactionBlocked; onActivated: root.toggleLinks() }
             Shortcut { sequence: "V"; enabled: root.opened && !root.interactionBlocked; onActivated: root.toggleHeaders() }
